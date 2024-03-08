@@ -3,10 +3,12 @@
 module Main where
 
 import Control.Applicative
-import Control.Monad (guard, void)
+import Control.Monad (guard, when, void)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Attoparsec.Text qualified as AP
+import Data.Functor (($>))
 import Data.List (intersperse)
+import Data.Map (Map)
 import Data.Map qualified as Map
 import Data.Maybe
 import Data.Text (Text)
@@ -18,6 +20,8 @@ import System.Environment (getEnv)
 import Telegram.Bot.API
 import Telegram.Bot.Simple
 import Telegram.Bot.Simple.UpdateParser (updateMessageText)
+import Data.Time.Clock
+import Data.Time.LocalTime (LocalTime(localTimeOfDay), ZonedTime (zonedTimeToLocalTime), utcToLocalZonedTime, TimeOfDay(..))
 
 data Model = Model
   { dbConnection :: Connection
@@ -38,7 +42,12 @@ flatbot model =
     { botInitialModel = model,
       botAction = updateToAction,
       botHandler = handleAction,
-      botJobs = []
+      botJobs =
+        [ BotJob
+            { botJobSchedule = "* * * * *",
+              botJobTask = nagUsers
+            }
+        ]
     }
 
 data FlatbotConfig = FlatbotConfig
@@ -150,9 +159,6 @@ userNameF user = "" +| userFirstName user |+ ""
 listWithF :: (a -> Builder) -> [a] -> Builder
 listWithF f = mconcat . intersperse ", " . map f
 
--- mentionUser :: Integer -> Text -> Text
--- mentionUser userId userName =
-
 handleAction :: Action -> Model -> Eff Action Model
 handleAction action model = case action of
   AddDebt chat receivable payables amount reason ->
@@ -180,14 +186,34 @@ handleAction action model = case action of
   SendSetup chat -> model <# void (runTG $ helpMessageMarkup chat)
   where
     helpMessageMarkup chat = let m = defSendMessage (SomeChatId $ chatId chat) helpMessage in m {sendMessageParseMode = Just HTML}
-    userReplyMessage :: User -> [User] -> Double -> Text -> Text
-    userReplyMessage receivable payables amount _ = "Recording that " +| listWithF userNameF payables |+ " owes " +| userNameF receivable |+ " " +| currencyF amount
-    settlementMessage :: User -> User -> Double -> Text
-    settlementMessage payable receivable settlementAmount = userNameF payable |+ " has now settled with " +| userNameF receivable |+ " for a value of " +| currencyF settlementAmount
-    tallyReplyMessage = Map.foldMapWithKey (\((_, receivable), (_, payable)) amount -> debtMessage receivable payable amount)
-    debtMessage :: Text -> Text -> Double -> Text
-    debtMessage receivableName payableName amount = fmtLn $ payableName |+ " owes " +| receivableName |+ " " +| currencyF amount
     unwrapUserId user = let (UserId id_) = userId user in id_
+
+userReplyMessage :: User -> [User] -> Double -> Text -> Text
+userReplyMessage receivable payables amount _ = "Recording that " +| listWithF userNameF payables |+ " owes " +| userNameF receivable |+ " " +| currencyF amount
+
+settlementMessage :: User -> User -> Double -> Text
+settlementMessage payable receivable settlementAmount = userNameF payable |+ " has now settled with " +| userNameF receivable |+ " for a value of " +| currencyF settlementAmount
+
+tallyReplyMessage :: Map ((Integer, Text), (Integer, Text)) Double -> Text
+tallyReplyMessage = Map.foldMapWithKey (\((_, receivable), (_, payable)) amount -> debtMessage receivable payable amount)
+
+debtMessage :: Text -> Text -> Double -> Text
+debtMessage receivableName payableName amount = fmtLn $ payableName |+ " owes " +| receivableName |+ " " +| currencyF amount
+
+nagUsers :: Model -> Eff Action Model
+nagUsers model = eff nagChats $> model
+  where
+    nagChats = do
+      nowTime <- liftIO . fmap (localTimeOfDay . zonedTimeToLocalTime) $ getCurrentTime >>= utcToLocalZonedTime
+      when (todHour nowTime == 12 && todMin nowTime == 0) $ do
+        chats <- liftIO $ getUnpaidChatList (dbConnection model)
+        mapM_ nagChat chats
+    nagChat chatId_ = do
+      debtTally <- liftIO $ tallyDebts <$> getChatDebts (dbConnection model) chatId_
+      if debtTally == mempty
+        then do
+          pure ()
+        else void (runTG $ defSendMessage (SomeChatId . ChatId $ chatId_) (tallyReplyMessage debtTally))
 
 run :: FlatbotConfig -> IO ()
 run config = do

@@ -1,5 +1,5 @@
 -- | Debt models
-module Debt (Debt, debtTableSchema, makeDebt, insertDebt, getChatDebts, tallyDebts, markDebtsRepaid, tallyDebt) where
+module Debt (Debt, debtTableSchema, makeDebt, insertDebt, getChatDebts, tallyDebts, markDebtsRepaid, tallyDebt, getUnpaidChatList) where
 
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -19,6 +19,11 @@ data Debt = Debt
   deriving (Show, Eq)
 
 newtype Amount = Amount { getAmount :: Double }
+newtype Id = Id {getId :: Integer}
+
+instance FromRow Id where
+  fromRow = Id <$> field
+
 instance FromRow Amount where
   fromRow = Amount <$> field
 
@@ -62,3 +67,6 @@ tallyDebts = Map.filter (> 0) . foldr (\debt -> recordRP debt . recordPR debt) m
   where
     recordRP debt = Map.insertWith (+) ((receivable debt, receivableUserName debt), (payable debt, payableUserName debt)) (amount debt)
     recordPR debt = Map.insertWith (+) ((payable debt, payableUserName debt), (receivable debt, receivableUserName debt)) (negate $ amount debt)
+
+getUnpaidChatList :: Connection -> IO [Integer]
+getUnpaidChatList conn = map getId <$> query_ conn "SELECT DISTINCT chat FROM debt WHERE PAID = FALSE"

@@ -12,7 +12,6 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Database.SQLite.Simple (Connection, execute_, open)
 import Debt
-import Debug.Trace
 import System.Environment (getEnv)
 import Telegram.Bot.API
 import Telegram.Bot.Simple
@@ -99,7 +98,7 @@ updateToAction update _ = case (updateChat update, updateCommand update, updateF
   (Just chat, Just Settle, Just payable, [receivable], _) -> Just $ SettleDebts chat payable receivable
   (Just chat, Just Help, _, _, _) -> Just $ SendHelp chat
   _ | isJust (updateMyChatMember update) -> Just (SendSetup (chatMemberUpdatedChat . fromJust . updateMyChatMember $ update))
-  _ -> trace (show update) $ Nothing
+  _ -> Nothing
   where
     parseAmount = AP.parseOnly debtParser
     spaces = void $ AP.takeTill (/= ' ')
@@ -158,7 +157,7 @@ handleAction action model = case action of
                settlementAmount <- liftIO $ tallyDebt (dbConnection model) chatId_ (unwrapUserId receivable) (unwrapUserId payable)
                liftIO . markDebtsRepaid (dbConnection model) chatId_ (unwrapUserId payable) . unwrapUserId $ receivable
                pure $ settlementMessage payable receivable (abs settlementAmount)
-  SendHelp chat -> model <# (void . trace "Sending help!" $ runTG (helpMessageMarkup chat))
+  SendHelp chat -> model <# (void $ runTG (helpMessageMarkup chat))
   SendSetup chat -> model <# (void $ runTG (helpMessageMarkup chat))
   where
     helpMessageMarkup chat = let m = defSendMessage (SomeChatId $ chatId chat) helpMessage in m {sendMessageParseMode = Just HTML}

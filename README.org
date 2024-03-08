@@ -1,0 +1,17 @@
+#+title: FlatBot V2
+
+Back by popular demand, flatbot V2 primarily allows group chats to keep track of debts owed between members. Most useful for flatting situations to keep track of what four or five different people owe each other.
+
+To run this bot set the enviroment variables =TELEGRAM_BOT_TOKEN= and =FLATBOT_DB_PATH= to your telegram API token key and database path respectively. To use the bot in a group chat, add the bot to the chat and it should print a help message something like the following:
+
+#+begin_quote
+Hi, resurrected flatbot here! Here is how to use me:
+
+To say that Daniel owes me $100, type /owes @Daniel $100.
+The @ is important, it will pop up with people to select when you do this.
+
+To get the current tally of debts, type /tally.
+
+To settle debts (payable to you, and receivable to you) with Daniel, use /settle @Daniel.
+Again the @ is important.
+#+end_quote

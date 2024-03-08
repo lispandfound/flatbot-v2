@@ -6,12 +6,14 @@ import Control.Applicative
 import Control.Monad (guard, void)
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Attoparsec.Text qualified as AP
+import Data.List (intersperse)
 import Data.Map qualified as Map
 import Data.Maybe
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Database.SQLite.Simple (Connection, execute_, open)
 import Debt
+import Fmt
 import System.Environment (getEnv)
 import Telegram.Bot.API
 import Telegram.Bot.Simple
@@ -103,7 +105,7 @@ updateToAction update _ = case (updateChat update, updateCommand update, updateF
     parseAmount = AP.parseOnly debtParser
     spaces = void $ AP.takeTill (/= ' ')
     roundCents :: Double -> Double
-    roundCents = (/ 100) . fromIntegral . round . (* 100)
+    roundCents = (/ 100) . fromInteger . round . (* 100)
     currency = roundCents <$> ("$" *> AP.double)
     debtParser = do
       spaces
@@ -134,6 +136,23 @@ helpMessage =
       "Again the <code>@</code> is important."
     ]
 
+currencyF :: Double -> Builder
+currencyF d = if df < 0 then "-$" else "$" +| commaizeF (abs df) |+ "." +| padRightF 2 '0' cents
+  where
+    df :: Integer
+    df = floor d
+    cents :: Integer
+    cents = round (d * 100) `mod` 100
+
+userNameF :: User -> Builder
+userNameF user = "" +| userFirstName user |+ ""
+
+listWithF :: (a -> Builder) -> [a] -> Builder
+listWithF f = mconcat . intersperse ", " . map f
+
+-- mentionUser :: Integer -> Text -> Text
+-- mentionUser userId userName =
+
 handleAction :: Action -> Model -> Eff Action Model
 handleAction action model = case action of
   AddDebt chat receivable payables amount reason ->
@@ -157,20 +176,17 @@ handleAction action model = case action of
                settlementAmount <- liftIO $ tallyDebt (dbConnection model) chatId_ (unwrapUserId receivable) (unwrapUserId payable)
                liftIO . markDebtsRepaid (dbConnection model) chatId_ (unwrapUserId payable) . unwrapUserId $ receivable
                pure $ settlementMessage payable receivable (abs settlementAmount)
-  SendHelp chat -> model <# (void $ runTG (helpMessageMarkup chat))
-  SendSetup chat -> model <# (void $ runTG (helpMessageMarkup chat))
+  SendHelp chat -> model <# void (runTG $ helpMessageMarkup chat)
+  SendSetup chat -> model <# void (runTG $ helpMessageMarkup chat)
   where
     helpMessageMarkup chat = let m = defSendMessage (SomeChatId $ chatId chat) helpMessage in m {sendMessageParseMode = Just HTML}
-    userReplyMessage receivable payables amount _ =
-      "Recording that "
-        <> Text.intercalate ", " (map userFirstName payables)
-        <> " owes "
-        <> userFirstName receivable
-        <> " $"
-        <> (Text.pack . show $ amount)
-    settlementMessage payable receivable settlementAmount = userFirstName payable <> " has now settled with " <> userFirstName receivable <> " for a value of " <> (Text.pack . show) settlementAmount
+    userReplyMessage :: User -> [User] -> Double -> Text -> Text
+    userReplyMessage receivable payables amount _ = "Recording that " +| listWithF userNameF payables |+ " owes " +| userNameF receivable |+ " " +| currencyF amount
+    settlementMessage :: User -> User -> Double -> Text
+    settlementMessage payable receivable settlementAmount = userNameF payable |+ " has now settled with " +| userNameF receivable |+ " for a value of " +| currencyF settlementAmount
     tallyReplyMessage = Map.foldMapWithKey (\((_, receivable), (_, payable)) amount -> debtMessage receivable payable amount)
-    debtMessage receivableName payableName amount = payableName <> " owes " <> receivableName <> " $" <> (Text.pack . show) amount <> "\n"
+    debtMessage :: Text -> Text -> Double -> Text
+    debtMessage receivableName payableName amount = fmtLn $ payableName |+ " owes " +| receivableName |+ " " +| currencyF amount
     unwrapUserId user = let (UserId id_) = userId user in id_
 
 run :: FlatbotConfig -> IO ()

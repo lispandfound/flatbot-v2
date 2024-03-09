@@ -3,8 +3,9 @@
 module Main where
 
 import Control.Applicative
-import Control.Monad (guard, when, void)
+import Control.Monad (guard, void, when)
 import Control.Monad.IO.Class (MonadIO (liftIO))
+import Data.Attoparsec.Text (takeText)
 import Data.Attoparsec.Text qualified as AP
 import Data.Functor (($>))
 import Data.List (intersperse)
@@ -13,6 +14,8 @@ import Data.Map qualified as Map
 import Data.Maybe
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Data.Time.Clock
+import Data.Time.LocalTime (LocalTime (localTimeOfDay), TimeOfDay (..), ZonedTime (zonedTimeToLocalTime), utcToLocalZonedTime)
 import Database.SQLite.Simple (Connection, execute_, open)
 import Debt
 import Fmt
@@ -20,9 +23,6 @@ import System.Environment (getEnv)
 import Telegram.Bot.API
 import Telegram.Bot.Simple
 import Telegram.Bot.Simple.UpdateParser (updateMessageText)
-import Data.Time.Clock
-import Data.Time.LocalTime (LocalTime(localTimeOfDay), ZonedTime (zonedTimeToLocalTime), utcToLocalZonedTime, TimeOfDay(..))
-import Data.Attoparsec.Text (takeText)
 
 data Model = Model
   { dbConnection :: Connection
@@ -151,8 +151,13 @@ helpMessage =
       "If you paid a $100 power bill and want to split that evenly between yourself and Daniel and Josh",
       "<pre>/split @Daniel @Josh $100</pre>",
       "This will record $33.33 debts owed to you from Daniel and Josh",
-      "To get the current tally of debts, type:",
+      "",
+      "To get a detailed history of every outstanding debt owed between yourself and Daniel:",
+      "<pre>/history @Daniel</pre>",
+      "",
+      "To get the current tally of all debts in the chat, type:",
       "<pre>/tally</pre>",
+      "",
       "To settle debts (both debts payable from you, and receivable to you) with Daniel, use:",
       "<pre>/settle @Daniel</pre>",
       "Again the <code>@</code> is important."
@@ -183,9 +188,9 @@ handleAction action model = case action of
   SplitDebt chat receivable payables amount reason ->
     let splitAmount = roundCents $ amount / fromIntegral (length payables + 1)
         debts = map (\payable -> createDebt chat receivable payable splitAmount reason) payables
-    in model <# do
-      liftIO $ mapM_ (insertDebt (dbConnection model)) debts
-      pure $ userReplyMessage receivable payables splitAmount reason
+     in model <# do
+          liftIO $ mapM_ (insertDebt (dbConnection model)) debts
+          pure $ userReplyMessage receivable payables splitAmount reason
   TallyChat chat ->
     model <# do
       let ChatId chatId_ = chatId chat
@@ -201,15 +206,15 @@ handleAction action model = case action of
                settlementAmount <- liftIO $ tallyDebt (dbConnection model) chatId_ (unwrapUserId receivable) (unwrapUserId payable)
                liftIO . markDebtsRepaid (dbConnection model) chatId_ (unwrapUserId payable) . unwrapUserId $ receivable
                pure $ settlementMessage payable receivable (abs settlementAmount)
-  DebtHistory chat receivable payable -> let ChatId chatId_ = chatId chat
-                                             UserId payableId = userId payable
-                                             UserId receivableId = userId receivable in model <# do
-   debts <- liftIO $ getDebtsBetween (dbConnection model) chatId_ receivableId payableId
-   if null debts then
-     pure $ userNameF receivable |+ " and " +| userNameF payable |+ " have no outstanding debts."
-   else
-     pure . foldMap (\d -> debtMessage (receivableUserName d) (payableUserName d) (amount d) (if reason d /= "" then Just (reason d) else Nothing)) $ debts
-
+  DebtHistory chat receivable payable ->
+    let ChatId chatId_ = chatId chat
+        UserId payableId = userId payable
+        UserId receivableId = userId receivable
+     in model <# do
+          debts <- liftIO $ getDebtsBetween (dbConnection model) chatId_ receivableId payableId
+          if null debts
+            then pure $ userNameF receivable |+ " and " +| userNameF payable |+ " have no outstanding debts."
+            else pure . foldMap (\d -> debtMessage (receivableUserName d) (payableUserName d) (amount d) (if reason d /= "" then Just (reason d) else Nothing)) $ debts
   SendHelp chat -> model <# void (runTG $ helpMessageMarkup chat)
   SendSetup chat -> model <# void (runTG $ helpMessageMarkup chat)
   where

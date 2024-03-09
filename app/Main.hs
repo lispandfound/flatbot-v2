@@ -31,6 +31,7 @@ type Amount = Double
 
 data Action
   = AddDebt Chat User [User] Amount Text
+  | SplitDebt Chat User [User] Amount Text
   | TallyChat Chat
   | SettleDebts Chat User User
   | SendHelp Chat
@@ -55,7 +56,7 @@ data FlatbotConfig = FlatbotConfig
     dbPath :: String
   }
 
-data Command = Owes | Tally | Settle | Help
+data Command = Owes | Tally | Split | Settle | Help
 
 findMaybe :: (a -> Maybe b) -> [a] -> Maybe b
 findMaybe f = foldr ((<|>) . f) Nothing
@@ -80,6 +81,7 @@ updateCommand update = do
     parseCommand "/tally" = Just Tally
     parseCommand "/settle" = Just Settle
     parseCommand "/help" = Just Help
+    parseCommand "/split" = Just Split
     parseCommand _ = Nothing
 
 updateMentions :: Update -> [User]
@@ -102,9 +104,13 @@ updateFrom upd = updateMessage upd >>= messageFrom
 updateChat :: Update -> Maybe Chat
 updateChat = fmap messageChat . updateMessage
 
+roundCents :: Double -> Double
+roundCents = (/ 100) . fromInteger . round . (* 100)
+
 updateToAction :: Update -> Model -> Maybe Action
 updateToAction update _ = case (updateChat update, updateCommand update, updateFrom update, updateMentions update, strippedMessageText update) of
-  (Just chat, Just Owes, Just receivable, payables, msg) | length payables > 0 -> either (const Nothing) (\amount -> Just $ AddDebt chat receivable payables amount "") (parseAmount msg)
+  (Just chat, Just Owes, Just receivable, payables, msg) | not (null payables) -> either (const Nothing) (\amount -> Just $ AddDebt chat receivable payables amount "") (parseAmount msg)
+  (Just chat, Just Split, Just receivable, payables, msg) | not (null payables) -> either (const Nothing) (\amount -> Just $ SplitDebt chat receivable payables amount "") (parseAmount msg)
   (Just chat, Just Tally, _, _, _) -> Just $ TallyChat chat
   (Just chat, Just Settle, Just payable, [receivable], _) -> Just $ SettleDebts chat payable receivable
   (Just chat, Just Help, _, _, _) -> Just $ SendHelp chat
@@ -113,8 +119,6 @@ updateToAction update _ = case (updateChat update, updateCommand update, updateF
   where
     parseAmount = AP.parseOnly debtParser
     spaces = void $ AP.takeTill (/= ' ')
-    roundCents :: Double -> Double
-    roundCents = (/ 100) . fromInteger . round . (* 100)
     currency = roundCents <$> ("$" *> AP.double)
     debtParser = do
       spaces
@@ -138,9 +142,13 @@ helpMessage =
       "To say that Daniel owes me $100, type:",
       "<pre>/owes @Daniel $100</pre>",
       "The <code>@</code> is important, it will pop up with people to select when you do this.",
+      "",
+      "If you paid a $100 power bill and want to split that evenly between yourself and Daniel and Josh",
+      "<pre>/split @Daniel @Josh $100</pre>",
+      "This will record $33.33 debts owed to you from Daniel and Josh",
       "To get the current tally of debts, type:",
       "<pre>/tally</pre>",
-      "To settle debts (payable to you, and receivable to you) with Daniel, use:",
+      "To settle debts (both debts payable from you, and receivable to you) with Daniel, use:",
       "<pre>/settle @Daniel</pre>",
       "Again the <code>@</code> is important."
     ]
@@ -167,6 +175,12 @@ handleAction action model = case action of
           in do
                liftIO $ mapM_ (insertDebt (dbConnection model)) debts
                pure $ userReplyMessage receivable payables amount reason
+  SplitDebt chat receivable payables amount reason ->
+    let splitAmount = roundCents $ amount / fromIntegral (length payables + 1)
+        debts = map (\payable -> createDebt chat receivable payable splitAmount reason) payables
+    in model <# do
+      liftIO $ mapM_ (insertDebt (dbConnection model)) debts
+      pure $ userReplyMessage receivable payables splitAmount reason
   TallyChat chat ->
     model <# do
       let ChatId chatId_ = chatId chat

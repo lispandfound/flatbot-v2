@@ -22,6 +22,7 @@ import Telegram.Bot.Simple
 import Telegram.Bot.Simple.UpdateParser (updateMessageText)
 import Data.Time.Clock
 import Data.Time.LocalTime (LocalTime(localTimeOfDay), ZonedTime (zonedTimeToLocalTime), utcToLocalZonedTime, TimeOfDay(..))
+import Data.Attoparsec.Text (takeText)
 
 data Model = Model
   { dbConnection :: Connection
@@ -33,6 +34,7 @@ data Action
   = AddDebt Chat User [User] Amount Text
   | SplitDebt Chat User [User] Amount Text
   | TallyChat Chat
+  | DebtHistory Chat User User
   | SettleDebts Chat User User
   | SendHelp Chat
   | SendSetup Chat
@@ -56,10 +58,10 @@ data FlatbotConfig = FlatbotConfig
     dbPath :: String
   }
 
-data Command = Owes | Tally | Split | Settle | Help
+data Command = Owes | Tally | Split | Settle | Help | History
 
 findMaybe :: (a -> Maybe b) -> [a] -> Maybe b
-findMaybe f = foldr ((<|>) . f) Nothing
+findMaybe f = asum . map f
 
 substring :: Int -> Int -> Text -> Text
 substring start len = Text.take len . Text.drop start
@@ -82,6 +84,7 @@ updateCommand update = do
     parseCommand "/settle" = Just Settle
     parseCommand "/help" = Just Help
     parseCommand "/split" = Just Split
+    parseCommand "/history" = Just History
     parseCommand _ = Nothing
 
 updateMentions :: Update -> [User]
@@ -109,15 +112,16 @@ roundCents = (/ 100) . fromInteger . round . (* 100)
 
 updateToAction :: Update -> Model -> Maybe Action
 updateToAction update _ = case (updateChat update, updateCommand update, updateFrom update, updateMentions update, strippedMessageText update) of
-  (Just chat, Just Owes, Just receivable, payables, msg) | not (null payables) -> either (const Nothing) (\amount -> Just $ AddDebt chat receivable payables amount "") (parseAmount msg)
-  (Just chat, Just Split, Just receivable, payables, msg) | not (null payables) -> either (const Nothing) (\amount -> Just $ SplitDebt chat receivable payables amount "") (parseAmount msg)
+  (Just chat, Just Owes, Just receivable, payables, msg) | not (null payables) -> either (const Nothing) (\(amount, reason) -> Just $ AddDebt chat receivable payables amount reason) (parseDebt msg)
+  (Just chat, Just Split, Just receivable, payables, msg) | not (null payables) -> either (const Nothing) (\(amount, reason) -> Just $ SplitDebt chat receivable payables amount reason) (parseDebt msg)
   (Just chat, Just Tally, _, _, _) -> Just $ TallyChat chat
   (Just chat, Just Settle, Just payable, [receivable], _) -> Just $ SettleDebts chat payable receivable
   (Just chat, Just Help, _, _, _) -> Just $ SendHelp chat
+  (Just chat, Just History, Just receivable, [payable], _) -> Just $ DebtHistory chat receivable payable
   _ | isJust (updateMyChatMember update) -> Just (SendSetup (chatMemberUpdatedChat . fromJust . updateMyChatMember $ update))
   _ -> Nothing
   where
-    parseAmount = AP.parseOnly debtParser
+    parseDebt = AP.parseOnly debtParser
     spaces = void $ AP.takeTill (/= ' ')
     currency = roundCents <$> ("$" *> AP.double)
     debtParser = do
@@ -125,7 +129,8 @@ updateToAction update _ = case (updateChat update, updateCommand update, updateF
       amount <- currency
       guard $ amount > 0
       spaces
-      return amount
+      reason <- takeText
+      return (amount, reason)
 
 createDebt :: Chat -> User -> User -> Double -> Text -> Debt
 createDebt chat receivable payable amount reason = makeDebt chatId_ receivableId (userFirstName receivable) payableId (userFirstName payable) amount reason
@@ -196,6 +201,15 @@ handleAction action model = case action of
                settlementAmount <- liftIO $ tallyDebt (dbConnection model) chatId_ (unwrapUserId receivable) (unwrapUserId payable)
                liftIO . markDebtsRepaid (dbConnection model) chatId_ (unwrapUserId payable) . unwrapUserId $ receivable
                pure $ settlementMessage payable receivable (abs settlementAmount)
+  DebtHistory chat receivable payable -> let ChatId chatId_ = chatId chat
+                                             UserId payableId = userId payable
+                                             UserId receivableId = userId receivable in model <# do
+   debts <- liftIO $ getDebtsBetween (dbConnection model) chatId_ receivableId payableId
+   if null debts then
+     pure $ userNameF receivable |+ " and " +| userNameF payable |+ " have no outstanding debts."
+   else
+     pure . foldMap (\d -> debtMessage (receivableUserName d) (payableUserName d) (amount d) (if reason d /= "" then Just (reason d) else Nothing)) $ debts
+
   SendHelp chat -> model <# void (runTG $ helpMessageMarkup chat)
   SendSetup chat -> model <# void (runTG $ helpMessageMarkup chat)
   where
@@ -203,16 +217,18 @@ handleAction action model = case action of
     unwrapUserId user = let (UserId id_) = userId user in id_
 
 userReplyMessage :: User -> [User] -> Double -> Text -> Text
-userReplyMessage receivable payables amount _ = "Recording that " +| listWithF userNameF payables |+ " owes " +| userNameF receivable |+ " " +| currencyF amount
+userReplyMessage receivable payables amount "" = "Recording that " +| listWithF userNameF payables |+ " owes " +| userNameF receivable |+ " " +| currencyF amount
+userReplyMessage receivable payables amount reason = "Recording that " +| listWithF userNameF payables |+ " owes " +| userNameF receivable |+ " " +| currencyF amount +| " for " +| reason |+ ""
 
 settlementMessage :: User -> User -> Double -> Text
 settlementMessage payable receivable settlementAmount = userNameF payable |+ " has now settled with " +| userNameF receivable |+ " for a value of " +| currencyF settlementAmount
 
 tallyReplyMessage :: Map ((Integer, Text), (Integer, Text)) Double -> Text
-tallyReplyMessage = Map.foldMapWithKey (\((_, receivable), (_, payable)) amount -> debtMessage receivable payable amount)
+tallyReplyMessage = Map.foldMapWithKey (\((_, receivable), (_, payable)) amount -> debtMessage receivable payable amount Nothing)
 
-debtMessage :: Text -> Text -> Double -> Text
-debtMessage receivableName payableName amount = fmtLn $ payableName |+ " owes " +| receivableName |+ " " +| currencyF amount
+debtMessage :: Text -> Text -> Double -> Maybe Text -> Text
+debtMessage receivableName payableName amount Nothing = fmtLn $ payableName |+ " owes " +| receivableName |+ " " +| currencyF amount
+debtMessage receivableName payableName amount (Just reason) = fmtLn $ payableName |+ " owes " +| receivableName |+ " " +| currencyF amount |+ " for " +| reason |+ ""
 
 nagUsers :: Model -> Eff Action Model
 nagUsers model = eff nagChats $> model

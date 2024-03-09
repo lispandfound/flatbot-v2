@@ -1,5 +1,5 @@
 -- | Debt models
-module Debt (Debt, debtTableSchema, makeDebt, insertDebt, getChatDebts, tallyDebts, markDebtsRepaid, tallyDebt, getUnpaidChatList) where
+module Debt (Debt(..), debtTableSchema, makeDebt, insertDebt, getChatDebts, tallyDebts, markDebtsRepaid, tallyDebt, getUnpaidChatList, getDebtsBetween) where
 
 import Data.Map (Map)
 import qualified Data.Map as Map
@@ -8,7 +8,7 @@ import Database.SQLite.Simple
 import Data.Maybe (fromMaybe)
 
 data Debt = Debt
-  { chatId :: Integer,
+  { debtChatId :: Integer,
     receivable :: Integer,
     receivableUserName :: Text, -- TODO: these should be looked up through the Telegram APIs
     payable :: Integer, -- The person owing the debt
@@ -70,3 +70,7 @@ tallyDebts = Map.filter (> 0) . foldr (\debt -> recordRP debt . recordPR debt) m
 
 getUnpaidChatList :: Connection -> IO [Integer]
 getUnpaidChatList conn = map getId <$> query_ conn "SELECT DISTINCT chat FROM debt WHERE PAID = FALSE"
+
+getDebtsBetween :: Connection -> Integer -> Integer -> Integer -> IO [Debt]
+getDebtsBetween conn chatId receivableId payableId = query conn q (chatId, receivableId, payableId, payableId, receivableId)
+  where q = "SELECT chat, receivable, receivableUserName, payable, payableUserName, amount, reason FROM debt WHERE chat = ? AND (receivable = ? AND payable = ? OR receivable = ? AND payable = ?) AND paid = FALSE"

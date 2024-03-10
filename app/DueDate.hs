@@ -158,9 +158,8 @@ duedate = everyWeekDay <|> everyTime <|> fixedTime <|> nextWeekDay <|> nextDay <
     weekday = "monday" $> Monday <|> "tuesday" $> Tuesday <|> "wednesday" $> Wednesday <|> "thursday" $> Thursday <|> "friday" $> Friday <|> "saturday" $> Saturday <|> "sunday" $> Sunday
     nextDay = do
       offset <- dayOffset
-      spaces
-      void $ optional ("at" *> spaces)
-      t <- timeOfDay
+      void $ optional (spaces *> "at" *> spaces)
+      t <- option midday timeOfDay
       return $ NextDay offset t
     dayOffset = "tomorrow" $> 1 <|> inDays <|> inWeeks
     inDays = do

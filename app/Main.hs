@@ -4,6 +4,7 @@ module Main (main) where
 
 import Bot.Action
 import Bot.Debt qualified as DB
+import Bot.Help qualified as HB
 import Bot.Reminder qualified as RB
 import Control.Applicative
 import Control.Monad (guard, void)
@@ -110,7 +111,12 @@ handleCallbackQuery update = do
   data_ <- callbackQueryData query
   either (const Nothing) Just $ AP.parseOnly callBackParser data_
   where
-    callBackParser = DeleteReminder <$> ("DeleteReminder " *> AP.decimal)
+    callBackParser = deleteReminder <|> debtHelp <|> dateHelp <|> reminderHelp
+    deleteReminder = DeleteReminder <$> ("DeleteReminder " *> AP.decimal)
+    debtHelp = "SendDebtHelp" $> SendDebtHelp
+    reminderHelp = "SendReminderHelp" $> SendReminderHelp
+    dateHelp = "SendDateHelp" $> SendDateHelp
+
 
 updateToAction :: Update -> Model -> Maybe Action
 updateToAction update _ =
@@ -120,7 +126,7 @@ updateToAction update _ =
       (Just chat, Just Split, Just receivable, payables, msg) | not (null payables) -> either (const Nothing) (\(amount, reason) -> Just $ SplitDebt chat receivable payables amount reason) (parseDebt msg)
       (Just chat, Just Tally, _, _, _) -> Just $ TallyChat chat
       (Just chat, Just Settle, Just payable, [receivable], _) -> Just $ SettleDebts chat payable receivable
-      (Just chat, Just Help, _, _, _) -> Just $ SendHelp chat
+      (Just _, Just Help, _, _, _) -> Just SendHelp
       (Just chat, Just History, Just receivable, [payable], _) -> Just $ DebtHistory chat receivable payable
       (Just chat, Just Remind, _, [remindee], text) -> case AP.parse duedate (Text.toLower text) of
         AP.Done rest dd -> Just $ AddReminder chat remindee dd (Text.strip . Text.drop (Text.length text - Text.length rest) $ text)
@@ -140,29 +146,10 @@ updateToAction update _ =
       reason <- takeText
       return (amount, reason)
 
-helpMessage :: Text
-helpMessage =
+setupMessage :: Text
+setupMessage =
   Text.unlines
-    [ "Hi, resurrected flatbot here! Here is how to use me:",
-      "",
-      "To say that Daniel owes me $100, type:",
-      "<pre>/owes @Daniel $100</pre>",
-      "The <code>@</code> is important, it will pop up with people to select when you do this.",
-      "",
-      "If you paid a $100 power bill and want to split that evenly between yourself and Daniel and Josh",
-      "<pre>/split @Daniel @Josh $100</pre>",
-      "This will record a debt of $33.33 owed to you from Daniel and Josh",
-      "",
-      "To get a detailed history of every outstanding debt owed between yourself and Daniel:",
-      "<pre>/history @Daniel</pre>",
-      "",
-      "To get the current tally of all debts in the chat, type:",
-      "<pre>/tally</pre>",
-      "",
-      "To settle debts (both debts payable from you, and receivable to you) with Daniel, use:",
-      "<pre>/settle @Daniel</pre>",
-      "Again the <code>@</code> is important."
-    ]
+    [ "Hi, resurrected flatbot here! Type /help to get started!" ]
 
 handleAction :: Action -> Model -> Eff Action Model
 handleAction action model = case action of
@@ -176,8 +163,11 @@ handleAction action model = case action of
     model <# RB.pickReminder (dbConnection model) chat
   DeleteReminder rid_ ->
     model <# RB.deleteReminder (dbConnection model) rid_
-  SendHelp chat -> model <# sendToChat (unwrapChatId chat) helpMessage
-  SendSetup chat -> model <# sendToChat (unwrapChatId chat) helpMessage
+  SendDateHelp -> model <# HB.sendDateHelp
+  SendReminderHelp -> model <# HB.sendReminderHelp
+  SendDebtHelp -> model <# HB.sendDebtHelp
+  SendHelp -> model <# HB.sendHelp
+  SendSetup chat -> model <# sendToChat (unwrapChatId chat) setupMessage
   where
     unwrapChatId chat = let (ChatId id_) = chatId chat in id_
 

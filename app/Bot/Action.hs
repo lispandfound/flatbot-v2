@@ -12,7 +12,10 @@ data Action
   | TallyChat Chat
   | DebtHistory Chat User User
   | SettleDebts Chat User User
-  | SendHelp Chat
+  | SendHelp
+  | SendDebtHelp
+  | SendReminderHelp
+  | SendDateHelp
   | SendSetup Chat
   | AddReminder Chat User DueDate Text
   | DeleteReminder Integer

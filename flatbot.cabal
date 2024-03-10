@@ -61,7 +61,7 @@ executable flatbot
     main-is:          Main.hs
 
     -- Modules included in this executable, other than Main.
-    other-modules: Data.Debt, Data.DueDate, Data.Reminder, Data.Formatters, Bot.Action, Bot.Debt, Bot.Reminder
+    other-modules: Data.Debt, Data.DueDate, Data.Reminder, Data.Formatters, Bot.Action, Bot.Debt, Bot.Reminder, Bot.Help
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:
@@ -74,7 +74,7 @@ executable flatbot
         OverloadedStrings
         GADTs
     -- Other library packages from which modules are imported.
-    build-depends:    base ^>=4.17.2.1, fmt, telegram-bot-simple, text, containers, attoparsec, aeson, telegram-bot-api, sqlite-simple, time, mtl
+    build-depends:    base ^>=4.17.2.1, fmt, telegram-bot-simple, text, containers, attoparsec, aeson, telegram-bot-api, sqlite-simple, time, mtl, blaze-html
 
     -- Directories containing source files.
     hs-source-dirs:   app

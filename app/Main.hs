@@ -23,6 +23,7 @@ import System.Environment (getEnv)
 import Telegram.Bot.API
 import Telegram.Bot.Simple
 import Telegram.Bot.Simple.UpdateParser (updateMessageText)
+import DueDate
 
 data Model = Model
   { dbConnection :: Connection
@@ -38,6 +39,7 @@ data Action
   | SettleDebts Chat User User
   | SendHelp Chat
   | SendSetup Chat
+  | AddReminder Chat User DueDate Text
 
 flatbot :: Model -> BotApp Model Action
 flatbot model =
@@ -58,7 +60,7 @@ data FlatbotConfig = FlatbotConfig
     dbPath :: String
   }
 
-data Command = Owes | Tally | Split | Settle | Help | History
+data Command = Owes | Tally | Split | Settle | Help | History | Remind
 
 findMaybe :: (a -> Maybe b) -> [a] -> Maybe b
 findMaybe f = asum . map f
@@ -85,6 +87,7 @@ updateCommand update = do
     parseCommand "/help" = Just Help
     parseCommand "/split" = Just Split
     parseCommand "/history" = Just History
+    parseCommand "/remind" = Just Remind
     parseCommand _ = Nothing
 
 updateMentions :: Update -> [User]
@@ -118,12 +121,15 @@ updateToAction update _ = case (updateChat update, updateCommand update, updateF
   (Just chat, Just Settle, Just payable, [receivable], _) -> Just $ SettleDebts chat payable receivable
   (Just chat, Just Help, _, _, _) -> Just $ SendHelp chat
   (Just chat, Just History, Just receivable, [payable], _) -> Just $ DebtHistory chat receivable payable
+  (Just chat, Just Remind, _, [remindee], text) -> case AP.parse duedate (Text.toLower text) of
+    AP.Done rest dd -> Just $ AddReminder chat remindee dd (Text.strip . Text.drop (Text.length text - Text.length rest) $ text)
+    _ -> Nothing
   _ | isJust (updateMyChatMember update) -> Just (SendSetup (chatMemberUpdatedChat . fromJust . updateMyChatMember $ update))
   _ -> Nothing
   where
     parseDebt = AP.parseOnly debtParser
     spaces = void $ AP.takeTill (/= ' ')
-    currency = roundCents <$> ("$" *> AP.double)
+    currency = roundCents <$> (optional "$" *> AP.double)
     debtParser = do
       spaces
       amount <- currency
@@ -150,7 +156,7 @@ helpMessage =
       "",
       "If you paid a $100 power bill and want to split that evenly between yourself and Daniel and Josh",
       "<pre>/split @Daniel @Josh $100</pre>",
-      "This will record $33.33 debts owed to you from Daniel and Josh",
+      "This will record a debt of $33.33 owed to you from Daniel and Josh",
       "",
       "To get a detailed history of every outstanding debt owed between yourself and Daniel:",
       "<pre>/history @Daniel</pre>",
@@ -215,11 +221,28 @@ handleAction action model = case action of
           if null debts
             then pure $ userNameF receivable |+ " and " +| userNameF payable |+ " have no outstanding debts."
             else pure . foldMap (\d -> debtMessage (receivableUserName d) (payableUserName d) (amount d) (if reason d /= "" then Just (reason d) else Nothing)) $ debts
+  AddReminder chat remindee dd reason -> model <# do
+    return $ reminderMessage remindee dd reason
   SendHelp chat -> model <# void (runTG $ helpMessageMarkup chat)
   SendSetup chat -> model <# void (runTG $ helpMessageMarkup chat)
   where
     helpMessageMarkup chat = let m = defSendMessage (SomeChatId $ chatId chat) helpMessage in m {sendMessageParseMode = Just HTML}
     unwrapUserId user = let (UserId id_) = userId user in id_
+
+pluralF :: (Ord a, Num a) => a -> Builder
+pluralF x = if x > 1 then "s" else ""
+
+reminderMessage :: User -> DueDate -> Text -> Text
+reminderMessage remindee dd reason = "Will remind " +| userNameF remindee |+ " " +| reason |+ " " +| dueDateF dd
+  where
+    dueDateF (FixedTime d t) = "on " +| d |+ " at " +| t |+ ""
+    dueDateF (NextDay 1 t) = "tomorrow at " +| t |+ ""
+    dueDateF (NextDay offset t) = "in " +| offset |+ " day" +| pluralF offset |+ " at " +| t |+ ""
+    dueDateF (NextWeekDay dayofweek t) = "next " +|| dayofweek ||+ " at " +| t |+ ""
+    dueDateF (NextTime t) = "at " +| t |+ ""
+    dueDateF (EveryDay 1 t) = "everyday at " +| t |+ ""
+    dueDateF (EveryDay offset t) = "every " +| offset |+ " days at " +| t |+ ""
+    dueDateF (EveryWeekDay weekday t) = "every " +|| weekday ||+ " at " +| t |+ ""
 
 userReplyMessage :: User -> [User] -> Double -> Text -> Text
 userReplyMessage receivable payables amount "" = "Recording that " +| listWithF userNameF payables |+ " owes " +| userNameF receivable |+ " " +| currencyF amount

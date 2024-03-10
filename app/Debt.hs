@@ -1,11 +1,10 @@
 -- | Debt models
-module Debt (Debt(..), debtTableSchema, makeDebt, insertDebt, getChatDebts, tallyDebts, markDebtsRepaid, tallyDebt, getUnpaidChatList, getDebtsBetween) where
+module Debt (Debt (..), debtTableSchema, makeDebt, insertDebt, getChatDebts, tallyDebts, markDebtsRepaid, tallyDebt, getUnpaidChatList, getDebtsBetween) where
 
 import Data.Map (Map)
-import qualified Data.Map as Map
+import Data.Map qualified as Map
 import Data.Text (Text)
 import Database.SQLite.Simple
-import Data.Maybe (fromMaybe)
 
 data Debt = Debt
   { debtChatId :: Integer,
@@ -18,7 +17,8 @@ data Debt = Debt
   }
   deriving (Show, Eq)
 
-newtype Amount = Amount { getAmount :: Double }
+newtype Amount = Amount {getAmount :: Double}
+
 newtype Id = Id {getId :: Integer}
 
 instance FromRow Id where
@@ -73,4 +73,5 @@ getUnpaidChatList conn = map getId <$> query_ conn "SELECT DISTINCT chat FROM de
 
 getDebtsBetween :: Connection -> Integer -> Integer -> Integer -> IO [Debt]
 getDebtsBetween conn chatId receivableId payableId = query conn q (chatId, receivableId, payableId, payableId, receivableId)
-  where q = "SELECT chat, receivable, receivableUserName, payable, payableUserName, amount, reason FROM debt WHERE chat = ? AND (receivable = ? AND payable = ? OR receivable = ? AND payable = ?) AND paid = FALSE"
+  where
+    q = "SELECT chat, receivable, receivableUserName, payable, payableUserName, amount, reason FROM debt WHERE chat = ? AND (receivable = ? AND payable = ? OR receivable = ? AND payable = ?) AND paid = FALSE"

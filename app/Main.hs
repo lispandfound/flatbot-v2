@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Main where
+module Main (main) where
 
 import Control.Applicative
 import Control.Monad (guard, void, when)
@@ -15,15 +15,17 @@ import Data.Maybe
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Time.Clock
-import Data.Time.LocalTime (LocalTime (localTimeOfDay), TimeOfDay (..), ZonedTime (zonedTimeToLocalTime), utcToLocalZonedTime)
+import Data.Time.LocalTime (LocalTime (localTimeOfDay), TimeOfDay (..), ZonedTime (zonedTimeToLocalTime), getCurrentTimeZone, localTimeToUTC, utcToLocalZonedTime)
 import Database.SQLite.Simple (Connection, execute_, open)
 import Debt
+import DueDate
 import Fmt
+import Reminder (getRemindersAtOrBefore)
+import Reminder qualified as R
 import System.Environment (getEnv)
 import Telegram.Bot.API
 import Telegram.Bot.Simple
 import Telegram.Bot.Simple.UpdateParser (updateMessageText)
-import DueDate
 
 data Model = Model
   { dbConnection :: Connection
@@ -51,6 +53,10 @@ flatbot model =
         [ BotJob
             { botJobSchedule = "* * * * *",
               botJobTask = nagUsers
+            },
+          BotJob
+            { botJobSchedule = "* * * * *",
+              botJobTask = remindUsers
             }
         ]
     }
@@ -221,13 +227,22 @@ handleAction action model = case action of
           if null debts
             then pure $ userNameF receivable |+ " and " +| userNameF payable |+ " have no outstanding debts."
             else pure . foldMap (\d -> debtMessage (receivableUserName d) (payableUserName d) (amount d) (if reason d /= "" then Just (reason d) else Nothing)) $ debts
-  AddReminder chat remindee dd reason -> model <# do
-    return $ reminderMessage remindee dd reason
-  SendHelp chat -> model <# void (runTG $ helpMessageMarkup chat)
-  SendSetup chat -> model <# void (runTG $ helpMessageMarkup chat)
+  AddReminder chat remindee dd reason ->
+    model <# do
+      liftIO $ do
+        now <- getCurrentLocalTime
+        zone <- getCurrentTimeZone
+        let nextDate = nextLocalDueDate now dd
+            nextDateUTC = localTimeToUTC zone nextDate
+            period = recurrencePeriod dd
+            reminder = R.mkReminder (unwrapChatId chat) (unwrapUserId remindee) (userFirstName remindee) reason nextDateUTC period
+        R.insertReminder (dbConnection model) reminder
+      return $ reminderMessage remindee dd reason
+  SendHelp chat -> model <# sendToChat (unwrapChatId chat) helpMessage
+  SendSetup chat -> model <# sendToChat (unwrapChatId chat) helpMessage
   where
-    helpMessageMarkup chat = let m = defSendMessage (SomeChatId $ chatId chat) helpMessage in m {sendMessageParseMode = Just HTML}
     unwrapUserId user = let (UserId id_) = userId user in id_
+    unwrapChatId chat = let (ChatId id_) = chatId chat in id_
 
 pluralF :: (Ord a, Num a) => a -> Builder
 pluralF x = if x > 1 then "s" else ""
@@ -244,6 +259,12 @@ reminderMessage remindee dd reason = "Will remind " +| userNameF remindee |+ " "
     dueDateF (EveryDay offset t) = "every " +| offset |+ " days at " +| t |+ ""
     dueDateF (EveryWeekDay weekday t) = "every " +|| weekday ||+ " at " +| t |+ ""
 
+userMentionF :: Integer -> Text -> Builder
+userMentionF remindeeId remindeeUserName = "<a href=\"tg://user?id=" +| remindeeId |+ "\">" +| remindeeUserName |+ "</a>"
+
+reminderNag :: Integer -> Text -> Text -> Text
+reminderNag remindeeId remindeeUserName reason = "Hey " +| userMentionF remindeeId remindeeUserName |+ " I am reminding you " +| reason |+ ""
+
 userReplyMessage :: User -> [User] -> Double -> Text -> Text
 userReplyMessage receivable payables amount "" = "Recording that " +| listWithF userNameF payables |+ " owes " +| userNameF receivable |+ " " +| currencyF amount
 userReplyMessage receivable payables amount reason = "Recording that " +| listWithF userNameF payables |+ " owes " +| userNameF receivable |+ " " +| currencyF amount +| " for " +| reason |+ ""
@@ -258,11 +279,14 @@ debtMessage :: Text -> Text -> Double -> Maybe Text -> Text
 debtMessage receivableName payableName amount Nothing = fmtLn $ payableName |+ " owes " +| receivableName |+ " " +| currencyF amount
 debtMessage receivableName payableName amount (Just reason) = fmtLn $ payableName |+ " owes " +| receivableName |+ " " +| currencyF amount |+ " for " +| reason |+ ""
 
+getCurrentLocalTime :: IO LocalTime
+getCurrentLocalTime = zonedTimeToLocalTime <$> (getCurrentTime >>= utcToLocalZonedTime)
+
 nagUsers :: Model -> Eff Action Model
 nagUsers model = eff nagChats $> model
   where
     nagChats = do
-      nowTime <- liftIO . fmap (localTimeOfDay . zonedTimeToLocalTime) $ getCurrentTime >>= utcToLocalZonedTime
+      nowTime <- liftIO $ localTimeOfDay <$> getCurrentLocalTime
       when (todHour nowTime == 12 && todMin nowTime == 0) $ do
         chats <- liftIO $ getUnpaidChatList (dbConnection model)
         mapM_ nagChat chats
@@ -271,13 +295,36 @@ nagUsers model = eff nagChats $> model
       if debtTally == mempty
         then do
           pure ()
-        else void (runTG $ defSendMessage (SomeChatId . ChatId $ chatId_) (tallyReplyMessage debtTally))
+        else sendToChat chatId_ (tallyReplyMessage debtTally)
+
+sendToChat :: Integer -> Text -> BotM ()
+sendToChat chatId msg = void (runTG $ defSendMessage (SomeChatId . ChatId $ chatId) msg)
+
+sendHTMLToChat :: Integer -> Text -> BotM ()
+sendHTMLToChat chatId markup = void (runTG msg)
+  where
+    msg = let m' = defSendMessage (SomeChatId . ChatId $ chatId) markup in m' {sendMessageParseMode = Just HTML}
+
+remindUsers :: Model -> Eff Action Model
+remindUsers model = eff remindUsersInChats $> model
+  where
+    remindUsersInChats = do
+      now <- liftIO getCurrentTime
+      reminders <- liftIO $ getRemindersAtOrBefore (dbConnection model) now
+      mapM_ remindUser reminders
+      liftIO $ R.clearRemindersAtOrBefore (dbConnection model) now
+    remindUser r = do
+      liftIO $ case (R.rid r, R.period r) of
+        (Just rid, Just period) -> R.bumpReminder (dbConnection model) rid (addUTCTime period $ R.nextNag r)
+        _ -> pure ()
+      sendHTMLToChat (R.chat r) (reminderNag (R.remindee r) (R.remindeeUserName r) (R.reason r))
 
 run :: FlatbotConfig -> IO ()
 run config = do
   env <- defaultTelegramClientEnv (token config)
   connection <- open (dbPath config)
   execute_ connection debtTableSchema
+  execute_ connection R.reminderTableSchema
   startBot_ (flatbot (Model connection)) env
 
 getConfigVariables :: IO FlatbotConfig

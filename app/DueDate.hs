@@ -1,5 +1,5 @@
 -- | Due Date parsing library
-module DueDate (DueDate(..), nextLocalDueDate, duedate) where
+module DueDate (DueDate (..), nextLocalDueDate, recurrencePeriod, duedate) where
 
 -- import Data.Attoparsec.Text
 
@@ -7,10 +7,9 @@ module DueDate (DueDate(..), nextLocalDueDate, duedate) where
 
 import Control.Applicative
 import Control.Monad
-import Data.Attoparsec.Text (Parser, parseOnly, space, choice, (<?>), option)
+import Data.Attoparsec.Text (Parser, choice, option, space, (<?>))
 import Data.Attoparsec.Text qualified as A
 import Data.Functor
-import Data.Text (Text)
 import Data.Time
 
 type DayOffset = Int
@@ -26,17 +25,28 @@ data DueDate
 
 data AMPM = AM | PM
 
-
 nextLocalDueDate :: LocalTime -> DueDate -> LocalTime
 nextLocalDueDate _ (FixedTime d t) = LocalTime d t
 nextLocalDueDate (LocalTime d _) (NextDay offset t) = LocalTime (addDays (fromIntegral offset) d) t
-nextLocalDueDate (LocalTime d _) (NextWeekDay weekday t) = LocalTime (addDays diff d) t
-  where diff' = dayOfWeekDiff weekday (dayOfWeek d)
-        diff :: Integer
-        diff = if diff' == 0 then 6 else diff
+nextLocalDueDate (LocalTime d _) (NextWeekDay weekday t') = LocalTime (addDays diff d) t'
+  where
+    diff' :: Integer
+    diff' = fromIntegral $ dayOfWeekDiff weekday (dayOfWeek d)
+    diff :: Integer
+    diff = if diff' == 0 then 6 else diff
 nextLocalDueDate (LocalTime d t) (NextTime t') = if t > t' then LocalTime (addDays 1 d) t' else LocalTime d t'
-nextLocalDueDate ldt (EveryDay offset t') = nextLocalDueDate ldt (NextDay offset t')
-nextLocalDueDate ldt (EveryWeekDay weekday t') = nextLocalDueDate ldt (NextWeekDay weekday t')
+nextLocalDueDate (LocalTime d t) (EveryDay offset t') = LocalTime (addDays (if t > t' then fromIntegral offset else 0) d) t'
+nextLocalDueDate (LocalTime d t) (EveryWeekDay weekday t') = LocalTime (addDays (if t > t' then diff else diff') d) t'
+  where
+    diff' :: Integer
+    diff' = fromIntegral $ dayOfWeekDiff weekday (dayOfWeek d)
+    diff :: Integer
+    diff = if diff' == 0 then 6 else diff
+
+recurrencePeriod :: DueDate -> Maybe NominalDiffTime
+recurrencePeriod (EveryDay offset _) = Just $ daysAndTimeOfDayToTime (fromIntegral offset) midnight
+recurrencePeriod (EveryWeekDay _ _) = Just $ daysAndTimeOfDayToTime 7 midnight
+recurrencePeriod _ = Nothing
 
 spaces :: Parser ()
 spaces = void $ some space
@@ -106,66 +116,65 @@ fixedDate = choice [parseDDMMYYYY >>= parseTimeFromDay, parseYYYYMMDD >>= parseT
 duedate :: Parser DueDate
 duedate = everyWeekDay <|> everyTime <|> fixedTime <|> nextWeekDay <|> nextDay <|> nextTime
   where
-        fixedTime = choice [dateTime, timeDate]
-        dateTime = do
-                day <- fixedDate <?> "day"
-                void " at " <|> spaces
-                time <- timeOfDay <?> "time"
-                return $ FixedTime day time
-        timeDate = do
-          time <- timeOfDay <?> "time"
-          void ", " <|> void " on " <|> void " of " <|> spaces
-          day <- fixedDate <?> "day"
-          return $ FixedTime day time
-        noon = TimeOfDay 12 0 0
-        everyTime = do
-          p <- period
-          void $ optional " at "
-          EveryDay p <$> option noon timeOfDay
-        period = choice [daily, weekly, monthly, everyPeriod]
-          where
-                daily = ("everyday" <|> "daily") $> 1
-                weekly = "weekly" $> 7
-                monthly = "monthly" $> 30
-                everyPeriod = "every " *> do
-                        mult <- option 1 (decimal <* spaces)
-                        p <- "day" $> 1 <|> "week" $> 7 <|> "month" $> 30 <|> "year" $> 365
-                        void $ optional "s"
-                        return $ p * mult
-        nextWeekDay = do
-          void $ optional "next "
-          day <- weekday
-          void " at " <|> void (many space)
-          time <- option noon timeOfDay
-          return $ NextWeekDay day time
-        everyWeekDay = do
-          void "every "
-          day <- weekday
-          void " at " <|> void (many space)
-          time <- option noon timeOfDay
-          return $ EveryWeekDay day time
-        nextTime = NextTime <$> timeOfDay
-        weekday = "monday" $> Monday <|> "tuesday" $> Tuesday <|> "wednesday" $> Wednesday <|> "thursday" $> Thursday <|> "friday" $> Friday <|> "saturday" $> Saturday <|> "sunday" $> Sunday
-        nextDay = do
-          offset <- dayOffset
-          spaces
-          void $ optional ("at" *> spaces)
-          t <- timeOfDay
-          return $ NextDay offset t
-        dayOffset = "tomorrow" $> 1 <|> inDays <|> inWeeks
-        inDays = do
-          void "in "
-          d <- decimal
-          void " day"
-          void $ optional "s"
-          return d
-        inWeeks = do
-          void "in "
-          d <- decimal
-          void " weeks"
-          void $ optional "s"
-          return $ 7 * d
-
+    fixedTime = choice [dateTime, timeDate]
+    dateTime = do
+      day <- fixedDate <?> "day"
+      void " at " <|> spaces
+      time <- timeOfDay <?> "time"
+      return $ FixedTime day time
+    timeDate = do
+      time <- timeOfDay <?> "time"
+      void ", " <|> void " on " <|> void " of " <|> spaces
+      day <- fixedDate <?> "day"
+      return $ FixedTime day time
+    everyTime = do
+      p <- period
+      void $ optional " at "
+      EveryDay p <$> option midday timeOfDay
+    period = choice [daily, weekly, monthly, everyPeriod]
+      where
+        daily = ("everyday" <|> "daily") $> 1
+        weekly = "weekly" $> 7
+        monthly = "monthly" $> 30
+        everyPeriod =
+          "every " *> do
+            mult <- option 1 (decimal <* spaces)
+            p <- "day" $> 1 <|> "week" $> 7 <|> "month" $> 30 <|> "year" $> 365
+            void $ optional "s"
+            return $ p * mult
+    nextWeekDay = do
+      void $ optional "next "
+      day <- weekday
+      void " at " <|> void (many space)
+      time <- option midday timeOfDay
+      return $ NextWeekDay day time
+    everyWeekDay = do
+      void "every "
+      day <- weekday
+      void " at " <|> void (many space)
+      time <- option midday timeOfDay
+      return $ EveryWeekDay day time
+    nextTime = NextTime <$> timeOfDay
+    weekday = "monday" $> Monday <|> "tuesday" $> Tuesday <|> "wednesday" $> Wednesday <|> "thursday" $> Thursday <|> "friday" $> Friday <|> "saturday" $> Saturday <|> "sunday" $> Sunday
+    nextDay = do
+      offset <- dayOffset
+      spaces
+      void $ optional ("at" *> spaces)
+      t <- timeOfDay
+      return $ NextDay offset t
+    dayOffset = "tomorrow" $> 1 <|> inDays <|> inWeeks
+    inDays = do
+      void "in "
+      d <- decimal
+      void " day"
+      void $ optional "s"
+      return d
+    inWeeks = do
+      void "in "
+      d <- decimal
+      void " weeks"
+      void $ optional "s"
+      return $ 7 * d
 
 -- Helper function for parsing integers
 decimal :: Parser Int

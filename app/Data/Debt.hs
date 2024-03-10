@@ -1,5 +1,5 @@
 -- | Debt models
-module Debt (Debt (..), debtTableSchema, makeDebt, insertDebt, getChatDebts, tallyDebts, markDebtsRepaid, tallyDebt, getUnpaidChatList, getDebtsBetween) where
+module Data.Debt (Debt (..), debtTableSchema, makeDebt, insertDebt, getChatDebts, tallyDebts, markDebtsRepaid, tallyDebt, getUnpaidChatList, getDebtsBetween) where
 
 import Data.Map (Map)
 import Data.Map qualified as Map

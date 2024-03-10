@@ -1,4 +1,4 @@
-module Reminder (Reminder (..), mkReminder, getReminders, deleteReminder, clearRemindersAtOrBefore, reminderTableSchema, bumpReminder, insertReminder, getRemindersAtOrBefore) where
+module Data.Reminder (Reminder (..), mkReminder, getReminders, deleteReminder, clearRemindersAtOrBefore, reminderTableSchema, bumpReminder, insertReminder, getRemindersAtOrBefore) where
 
 import Data.Text (Text)
 import Data.Time

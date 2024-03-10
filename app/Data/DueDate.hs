@@ -1,5 +1,5 @@
 -- | Due Date parsing library
-module DueDate (DueDate (..), nextLocalDueDate, recurrencePeriod, duedate) where
+module Data.DueDate (DueDate (..), nextLocalDueDate, recurrencePeriod, duedate) where
 
 -- import Data.Attoparsec.Text
 

@@ -42,6 +42,9 @@ data Action
   | SendHelp Chat
   | SendSetup Chat
   | AddReminder Chat User DueDate Text
+  | DeleteReminder Integer
+  | PickReminder Chat
+  deriving (Show)
 
 flatbot :: Model -> BotApp Model Action
 flatbot model =
@@ -66,7 +69,7 @@ data FlatbotConfig = FlatbotConfig
     dbPath :: String
   }
 
-data Command = Owes | Tally | Split | Settle | Help | History | Remind
+data Command = Owes | Tally | Split | Settle | Help | History | Remind | Unremind deriving (Eq)
 
 findMaybe :: (a -> Maybe b) -> [a] -> Maybe b
 findMaybe f = asum . map f
@@ -94,6 +97,7 @@ updateCommand update = do
     parseCommand "/split" = Just Split
     parseCommand "/history" = Just History
     parseCommand "/remind" = Just Remind
+    parseCommand "/unremind" = Just Unremind
     parseCommand _ = Nothing
 
 updateMentions :: Update -> [User]
@@ -119,19 +123,30 @@ updateChat = fmap messageChat . updateMessage
 roundCents :: Double -> Double
 roundCents = (/ 100) . fromInteger . round . (* 100)
 
+handleCallbackQuery :: Update -> Maybe Action
+handleCallbackQuery update = do
+  query <- updateCallbackQuery update
+  data_ <- callbackQueryData query
+  either (const Nothing) Just $ AP.parseOnly callBackParser data_
+  where
+    callBackParser = DeleteReminder <$> ("DeleteReminder " *> AP.decimal)
+
 updateToAction :: Update -> Model -> Maybe Action
-updateToAction update _ = case (updateChat update, updateCommand update, updateFrom update, updateMentions update, strippedMessageText update) of
-  (Just chat, Just Owes, Just receivable, payables, msg) | not (null payables) -> either (const Nothing) (\(amount, reason) -> Just $ AddDebt chat receivable payables amount reason) (parseDebt msg)
-  (Just chat, Just Split, Just receivable, payables, msg) | not (null payables) -> either (const Nothing) (\(amount, reason) -> Just $ SplitDebt chat receivable payables amount reason) (parseDebt msg)
-  (Just chat, Just Tally, _, _, _) -> Just $ TallyChat chat
-  (Just chat, Just Settle, Just payable, [receivable], _) -> Just $ SettleDebts chat payable receivable
-  (Just chat, Just Help, _, _, _) -> Just $ SendHelp chat
-  (Just chat, Just History, Just receivable, [payable], _) -> Just $ DebtHistory chat receivable payable
-  (Just chat, Just Remind, _, [remindee], text) -> case AP.parse duedate (Text.toLower text) of
-    AP.Done rest dd -> Just $ AddReminder chat remindee dd (Text.strip . Text.drop (Text.length text - Text.length rest) $ text)
-    _ -> Nothing
-  _ | isJust (updateMyChatMember update) -> Just (SendSetup (chatMemberUpdatedChat . fromJust . updateMyChatMember $ update))
-  _ -> Nothing
+updateToAction update _ =
+  handleCallbackQuery update
+    <|> case (updateChat update, updateCommand update, updateFrom update, updateMentions update, strippedMessageText update) of
+      (Just chat, Just Owes, Just receivable, payables, msg) | not (null payables) -> either (const Nothing) (\(amount, reason) -> Just $ AddDebt chat receivable payables amount reason) (parseDebt msg)
+      (Just chat, Just Split, Just receivable, payables, msg) | not (null payables) -> either (const Nothing) (\(amount, reason) -> Just $ SplitDebt chat receivable payables amount reason) (parseDebt msg)
+      (Just chat, Just Tally, _, _, _) -> Just $ TallyChat chat
+      (Just chat, Just Settle, Just payable, [receivable], _) -> Just $ SettleDebts chat payable receivable
+      (Just chat, Just Help, _, _, _) -> Just $ SendHelp chat
+      (Just chat, Just History, Just receivable, [payable], _) -> Just $ DebtHistory chat receivable payable
+      (Just chat, Just Remind, _, [remindee], text) -> case AP.parse duedate (Text.toLower text) of
+        AP.Done rest dd -> Just $ AddReminder chat remindee dd (Text.strip . Text.drop (Text.length text - Text.length rest) $ text)
+        _ -> Nothing
+      (Just chat, Just Unremind, _, _, _) -> Just (PickReminder chat)
+      _ | isJust (updateMyChatMember update) -> Just (SendSetup (chatMemberUpdatedChat . fromJust . updateMyChatMember $ update))
+      _ -> Nothing
   where
     parseDebt = AP.parseOnly debtParser
     spaces = void $ AP.takeTill (/= ' ')
@@ -238,11 +253,29 @@ handleAction action model = case action of
             reminder = R.mkReminder (unwrapChatId chat) (unwrapUserId remindee) (userFirstName remindee) reason nextDateUTC period
         R.insertReminder (dbConnection model) reminder
       return $ reminderMessage remindee dd reason
+  PickReminder chat ->
+    model <# do
+      reminderList <- liftIO $ R.getReminders (dbConnection model) (unwrapChatId chat)
+      let msg =
+            (toEditMessage "Select a reminder to delete")
+              { editMessageReplyMarkup = Just $ SomeInlineKeyboardMarkup (reminderKeyboard reminderList)
+              }
+      replyOrEdit msg
+  DeleteReminder rid_ ->
+    model <# do
+      liftIO $ R.deleteReminder (dbConnection model) rid_
+      editUpdateMessageText ("Reminder deleted" :: Text)
   SendHelp chat -> model <# sendToChat (unwrapChatId chat) helpMessage
   SendSetup chat -> model <# sendToChat (unwrapChatId chat) helpMessage
   where
     unwrapUserId user = let (UserId id_) = userId user in id_
     unwrapChatId chat = let (ChatId id_) = chatId chat in id_
+
+reminderKeyboard :: [R.Reminder] -> InlineKeyboardMarkup
+reminderKeyboard = InlineKeyboardMarkup . map (\r -> [actionButton (reminderButtonMessage r) (DeleteReminder (fromJust $ R.rid r))])
+
+reminderButtonMessage :: R.Reminder -> Text
+reminderButtonMessage r = "Remind " +| R.remindeeUserName r |+ " " +| R.reason r |+ ""
 
 pluralF :: (Ord a, Num a) => a -> Builder
 pluralF x = if x > 1 then "s" else ""

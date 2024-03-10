@@ -74,7 +74,7 @@ executable flatbot
         OverloadedStrings
         GADTs
     -- Other library packages from which modules are imported.
-    build-depends:    base ^>=4.17.2.1, fmt, telegram-bot-simple, text, containers, attoparsec, aeson, telegram-bot-api, sqlite-simple, time
+    build-depends:    base ^>=4.17.2.1, fmt, telegram-bot-simple, text, containers, attoparsec, aeson, telegram-bot-api, sqlite-simple, time, mtl
 
     -- Directories containing source files.
     hs-source-dirs:   app

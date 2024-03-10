@@ -1,0 +1,19 @@
+name: CD
+
+on:
+  push:
+    branches: [ "master" ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Build 
+        run: cabal build
+      - name: Install
+        run: cabal install --installdir /opt/flatbot --overwrite-policy=always
+      - name: Restart service
+        run: systemctl --user restart flatbot

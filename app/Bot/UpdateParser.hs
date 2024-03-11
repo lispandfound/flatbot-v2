@@ -2,7 +2,7 @@ module Bot.UpdateParser where
 
 import Control.Arrow ((&&&))
 import Control.Monad
-import Control.Monad.Except (ExceptT, MonadError (throwError), runExceptT)
+import Control.Monad.Except (ExceptT, MonadError (throwError), runExceptT, catchError)
 import Control.Monad.Reader (Reader, ask, asks, runReader)
 import Data.Attoparsec.Text (Parser, parseOnly, string, (<?>))
 import Data.Monoid (First(..))
@@ -53,7 +53,7 @@ mentions = ask >>= go
       return users
 
 overrideError :: Markup -> UpdateParser a -> UpdateParser a
-overrideError e p = ask >>= (either (const $ throwParseError e) pure . runUpdateParser p)
+overrideError e = flip catchError (const $ throwParseError e)
 
 mention :: UpdateParser User
 mention = do

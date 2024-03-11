@@ -8,6 +8,8 @@ import Telegram.Bot.Simple
 import Text.Blaze.Html (Markup)
 import Text.Blaze.Html.Renderer.Text
 import Text.Blaze.Html5 qualified as H
+import Bot.UpdateParser
+import Data.Functor
 
 helpMessage :: EditMessage
 helpMessage =
@@ -116,6 +118,18 @@ dateHelp = do
         "- weekly at 8pm",
         "- every month at noon"
       ]
+
+helpCommand :: UpdateParser Action
+helpCommand = command "help" $> SendHelp
+
+debtHelpCallback :: UpdateParser Action
+debtHelpCallback = callbackQueryParser "SendDebtHelp" $> SendDebtHelp
+
+reminderHelpCallback :: UpdateParser Action
+reminderHelpCallback = callbackQueryParser "SendReminderHelp" $> SendReminderHelp
+
+dateHelpCallback :: UpdateParser Action
+dateHelpCallback = callbackQueryParser "SendDateHelp" $> SendDateHelp
 
 sendDebtHelp :: BotM ()
 sendDebtHelp = htmlEditUpdateMessage debtHelp

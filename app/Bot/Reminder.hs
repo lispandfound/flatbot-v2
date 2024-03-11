@@ -15,6 +15,10 @@ import Database.SQLite.Simple
 import Fmt
 import Telegram.Bot.API
 import Telegram.Bot.Simple
+import Bot.UpdateParser as UP
+import Bot.Action
+import Data.Attoparsec.Text (takeText, decimal)
+
 
 getCurrentLocalTime :: IO LocalTime
 getCurrentLocalTime = zonedTimeToLocalTime <$> (getCurrentTime >>= utcToLocalZonedTime)
@@ -33,6 +37,7 @@ addReminder conn chat remindee dd reason = do
   where
     (ChatId chatId_) = chatId chat
     (UserId remindeeId) = userId remindee
+
 
 reminderKeyboard :: [Reminder] -> InlineKeyboardMarkup
 reminderKeyboard = InlineKeyboardMarkup . map (\r -> [actionButton (reminderButtonMessage r) (DeleteReminder (fromJust $ rid r))])
@@ -92,3 +97,24 @@ remindUser conn r = do
     (Just rid, Just period) -> R.bumpReminder conn rid (addUTCTime period $ R.nextNag r)
     _ -> pure ()
   sendHTMLToChat (R.chat r) (reminderNag (R.remindee r) (R.remindeeUserName r) (R.reason r))
+
+reminderErrorMessage :: String
+reminderErrorMessage = unlines ["I could understand that /remind command you just gave.",
+                                "Try reading the documentation on dates or reminders?",
+                                "The syntax is /remind <@person> <date> <reason>",
+                                "e.g. /remind @Daniel tuesday evening to take out the bins"]
+
+
+reminderMentionMessage :: String
+reminderMentionMessage = unlines ["You need to mention the person you want to remind, like so:"
+                                 , "/remind @Daniel tuesday evening to take out the bins"]
+
+addReminderCommand :: UpdateParser Action
+addReminderCommand = command "remind" *> (AddReminder <$> UP.chat <*> overrideError reminderErrorMessage mention <*> overrideError reminderErrorMessage (messageParser reminder))
+  where reminder = (,) <$> duedate <*> takeText
+
+pickReminderCommand :: UpdateParser Action
+pickReminderCommand = command "unremind" *> (PickReminder <$> UP.chat)
+
+deleteReminderCallback :: UpdateParser Action
+deleteReminderCallback = callbackQueryParser ("DeleteReminder " *> (DeleteReminder <$> decimal))

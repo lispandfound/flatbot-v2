@@ -7,8 +7,8 @@ import Telegram.Bot.API (Chat, User)
 type Amount = Double
 
 data Action
-  = AddDebt Chat User [User] Amount Text
-  | SplitDebt Chat User [User] Amount Text
+  = AddDebt Chat User [User] (Amount, Text)
+  | SplitDebt Chat User [User] (Amount, Text)
   | TallyChat Chat
   | DebtHistory Chat User User
   | SettleDebts Chat User User
@@ -17,7 +17,8 @@ data Action
   | SendReminderHelp
   | SendDateHelp
   | SendSetup Chat
-  | AddReminder Chat User DueDate Text
+  | AddReminder Chat User (DueDate, Text)
   | DeleteReminder Integer
   | PickReminder Chat
+  | ReportError String
   deriving (Show)

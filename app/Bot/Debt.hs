@@ -14,6 +14,75 @@ import Database.SQLite.Simple
 import Fmt
 import Telegram.Bot.API
 import Telegram.Bot.Simple
+import Bot.UpdateParser
+import Bot.Action
+import Data.Attoparsec.Text
+import Control.Applicative
+
+spaces :: Parser ()
+spaces = void $ takeTill (/= ' ')
+
+currency :: Parser Double
+currency = do
+  void . optional $ "$"
+  wholePart <- decimal :: Parser Integer
+  guard $ wholePart > 0
+  (lead, centPart) <- option (mempty, 0) ("." *> ((,) <$> many (char '0') <*> decimal)) :: Parser ([Char], Integer)
+  guard $ length lead <= 2 && centPart >= 0 && centPart < 100
+  return $ fromIntegral wholePart + fromInteger centPart / (10 ^ ind)
+  where ind :: Integer
+        ind = 2
+
+
+debt :: UpdateParser (Double, Text)
+debt = messageParser $ do
+  spaces
+  amount <- currency
+  guard (amount > 0)
+  reason <- option "" $ " " *> spaces *> takeText
+  return (amount, reason)
+
+
+debtCommandError :: String -> String
+debtCommandError cmd = unlines [ "I couldn't understand the " ++ cmd ++ " command you just gave.",
+                             "Try reading the help documentation on debts? Type /help to find it.",
+                             "You should try something like",
+                             cmd ++ " @Daniel $30 power"
+                           ]
+
+debtIncorrectMentionsCountError :: String -> String
+debtIncorrectMentionsCountError cmd = unlines [
+  "You have to mention at least one person who owes you a debt, like so: ",
+  cmd ++ " @Daniel $30 power",
+  "Maybe try reading the documentation on debts? Type /help to find it."
+                                              ]
+
+addDebtCommand :: UpdateParser Action
+addDebtCommand = command "owes" *> (AddDebt <$> chat <*> sender <*> overrideError (debtIncorrectMentionsCountError "/owes") mentions <*> overrideError (debtCommandError "/owes") debt)
+
+splitDebtCommand :: UpdateParser Action
+splitDebtCommand = command "split" *> (SplitDebt <$> chat <*> sender <*> overrideError (debtIncorrectMentionsCountError "/split") mentions <*> overrideError (debtCommandError "/split") debt)
+
+tallyChatCommand :: UpdateParser Action
+tallyChatCommand = command "tally" *> (TallyChat <$> chat)
+
+historyErrorMessage :: String
+historyErrorMessage = unlines [
+  "You have to mention the person you want to compare your debts with, like so:",
+  "/history @Daniel"
+                             ]
+
+historyChatCommand :: UpdateParser Action
+historyChatCommand = command "history" *> (DebtHistory <$> chat <*> sender <*> overrideError historyErrorMessage mention)
+
+settleErrorMessage :: String
+settleErrorMessage = unlines [
+  "You have to mention the person you're settling your debts with, like so:",
+  "/settle @Daniel"
+                             ]
+settleChatCommand :: UpdateParser Action
+settleChatCommand = command "settle" *> (SettleDebts <$> chat <*> sender <*> overrideError settleErrorMessage mention)
+
 
 roundCents :: Double -> Double
 roundCents = (/ 100) . fromInteger . round . (* 100)

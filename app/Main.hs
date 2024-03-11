@@ -6,14 +6,11 @@ import Bot.Action
 import Bot.Debt qualified as DB
 import Bot.Help qualified as HB
 import Bot.Reminder qualified as RB
+import Bot.UpdateParser (UpdateParser (..))
 import Control.Applicative
-import Control.Monad (guard, void)
-import Data.Attoparsec.Text (takeText)
-import Data.Attoparsec.Text qualified as AP
+import Control.Monad (void)
 import Data.Debt
-import Data.DueDate
 import Data.Functor (($>))
-import Data.Maybe
 import Data.Reminder qualified as R
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -21,12 +18,10 @@ import Database.SQLite.Simple (Connection, execute_, open)
 import System.Environment (getEnv)
 import Telegram.Bot.API
 import Telegram.Bot.Simple
-import Telegram.Bot.Simple.UpdateParser (updateMessageText)
 
 data Model = Model
   { dbConnection :: Connection
   }
-
 
 flatbot :: Model -> BotApp Model Action
 flatbot model =
@@ -51,114 +46,36 @@ data FlatbotConfig = FlatbotConfig
     dbPath :: String
   }
 
-data Command = Owes | Tally | Split | Settle | Help | History | Remind | Unremind deriving (Eq)
-
-findMaybe :: (a -> Maybe b) -> [a] -> Maybe b
-findMaybe f = asum . map f
-
-substring :: Int -> Int -> Text -> Text
-substring start len = Text.take len . Text.drop start
-
-updateCommand :: Update -> Maybe Command
-updateCommand update = do
-  msg <- updateMessage update
-  text <- updateMessageText update
-  entities <- messageEntities msg
-  findMaybe
-    ( \ent -> case messageEntityType ent of
-        MessageEntityBotCommand -> parseCommand (substring (messageEntityOffset ent) (messageEntityLength ent) text)
-        _ -> Nothing
-    )
-    entities
-  where
-    parseCommand :: Text -> Maybe Command
-    parseCommand "/owes" = Just Owes
-    parseCommand "/tally" = Just Tally
-    parseCommand "/settle" = Just Settle
-    parseCommand "/help" = Just Help
-    parseCommand "/split" = Just Split
-    parseCommand "/history" = Just History
-    parseCommand "/remind" = Just Remind
-    parseCommand "/unremind" = Just Unremind
-    parseCommand _ = Nothing
-
-updateMentions :: Update -> [User]
-updateMentions update = fromMaybe [] $ do
-  msg <- updateMessage update
-  entities <- messageEntities msg
-  pure $ mapMaybe messageEntityUser entities
-
-strippedMessageText :: Update -> Text
-strippedMessageText update = Text.pack . map snd . filter (\(i, _) -> all (i `outside`) entityBounds) . zip [0 ..] . Text.unpack . fromMaybe "" . updateMessageText $ update
-  where
-    entityBounds = map (\ent -> (messageEntityOffset ent, entityEnd ent)) entities
-    outside i (lb, ub) = i < lb || i > ub
-    entities = fromMaybe [] (updateMessage update >>= messageEntities)
-    entityEnd ent = messageEntityOffset ent + messageEntityLength ent
-
-updateFrom :: Update -> Maybe User
-updateFrom upd = updateMessage upd >>= messageFrom
-
-updateChat :: Update -> Maybe Chat
-updateChat = fmap messageChat . updateMessage
-
-roundCents :: Double -> Double
-roundCents = (/ 100) . fromInteger . round . (* 100)
-
-handleCallbackQuery :: Update -> Maybe Action
-handleCallbackQuery update = do
-  query <- updateCallbackQuery update
-  data_ <- callbackQueryData query
-  either (const Nothing) Just $ AP.parseOnly callBackParser data_
-  where
-    callBackParser = deleteReminder <|> debtHelp <|> dateHelp <|> reminderHelp
-    deleteReminder = DeleteReminder <$> ("DeleteReminder " *> AP.decimal)
-    debtHelp = "SendDebtHelp" $> SendDebtHelp
-    reminderHelp = "SendReminderHelp" $> SendReminderHelp
-    dateHelp = "SendDateHelp" $> SendDateHelp
-
-
 updateToAction :: Update -> Model -> Maybe Action
 updateToAction update _ =
-  handleCallbackQuery update
-    <|> case (updateChat update, updateCommand update, updateFrom update, updateMentions update, strippedMessageText update) of
-      (Just chat, Just Owes, Just receivable, payables, msg) | not (null payables) -> either (const Nothing) (\(amount, reason) -> Just $ AddDebt chat receivable payables amount reason) (parseDebt msg)
-      (Just chat, Just Split, Just receivable, payables, msg) | not (null payables) -> either (const Nothing) (\(amount, reason) -> Just $ SplitDebt chat receivable payables amount reason) (parseDebt msg)
-      (Just chat, Just Tally, _, _, _) -> Just $ TallyChat chat
-      (Just chat, Just Settle, Just payable, [receivable], _) -> Just $ SettleDebts chat payable receivable
-      (Just _, Just Help, _, _, _) -> Just SendHelp
-      (Just chat, Just History, Just receivable, [payable], _) -> Just $ DebtHistory chat receivable payable
-      (Just chat, Just Remind, _, [remindee], text) -> case AP.parse duedate (Text.toLower text) of
-        AP.Done rest dd -> Just $ AddReminder chat remindee dd (Text.strip . Text.drop (Text.length text - Text.length rest) $ text)
-        _ -> Nothing
-      (Just chat, Just Unremind, _, _, _) -> Just (PickReminder chat)
-      _ | isJust (updateMyChatMember update) -> Just (SendSetup (chatMemberUpdatedChat . fromJust . updateMyChatMember $ update))
-      _ -> Nothing
-  where
-    parseDebt = AP.parseOnly debtParser
-    spaces = void $ AP.takeTill (/= ' ')
-    currency = roundCents <$> (optional "$" *> AP.double)
-    debtParser = do
-      spaces
-      amount <- currency
-      guard $ amount > 0
-      spaces
-      reason <- takeText
-      return (amount, reason)
+  let parsed = runUpdateParser (DB.addDebtCommand
+                                <|> DB.splitDebtCommand
+                                <|> DB.tallyChatCommand
+                                <|> DB.settleChatCommand
+                                <|> DB.historyChatCommand
+                                <|> HB.helpCommand
+                                <|> HB.debtHelpCallback
+                                <|> HB.reminderHelpCallback
+                                <|> HB.dateHelpCallback
+                                <|> RB.addReminderCommand
+                                <|> RB.pickReminderCommand
+                                <|> RB.deleteReminderCallback
+                               ) update
+   in either (fmap ReportError) Just parsed
 
 setupMessage :: Text
 setupMessage =
   Text.unlines
-    [ "Hi, resurrected flatbot here! Type /help to get started!" ]
+    ["Hi, resurrected flatbot here! Type /help to get started!"]
 
 handleAction :: Action -> Model -> Eff Action Model
 handleAction action model = case action of
-  AddDebt chat receivable payables amount reason -> model <# DB.addDebt (dbConnection model) chat receivable payables amount reason
-  SplitDebt chat receivable payables amount reason -> model <# DB.splitDebt (dbConnection model) chat receivable payables amount reason
+  AddDebt chat receivable payables (amount, reason) -> model <# DB.addDebt (dbConnection model) chat receivable payables amount reason
+  SplitDebt chat receivable payables (amount, reason) -> model <# DB.splitDebt (dbConnection model) chat receivable payables amount reason
   TallyChat chat -> model <# DB.tallyDebt (dbConnection model) chat
   SettleDebts chat payable receivable -> model <# DB.settleDebts (dbConnection model) chat payable receivable
   DebtHistory chat receivable payable -> model <# DB.debtHistory (dbConnection model) chat receivable payable
-  AddReminder chat remindee dd reason -> model <# RB.addReminder (dbConnection model) chat remindee dd reason
+  AddReminder chat remindee (dd, reason) -> model <# RB.addReminder (dbConnection model) chat remindee dd reason
   PickReminder chat ->
     model <# RB.pickReminder (dbConnection model) chat
   DeleteReminder rid_ ->
@@ -168,6 +85,7 @@ handleAction action model = case action of
   SendDebtHelp -> model <# HB.sendDebtHelp
   SendHelp -> model <# HB.sendHelp
   SendSetup chat -> model <# sendToChat (unwrapChatId chat) setupMessage
+  ReportError err -> model <# replyText (Text.pack err)
   where
     unwrapChatId chat = let (ChatId id_) = chatId chat in id_
 

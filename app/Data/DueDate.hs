@@ -7,7 +7,7 @@ module Data.DueDate (DueDate (..), nextLocalDueDate, recurrencePeriod, duedate) 
 
 import Control.Applicative
 import Control.Monad
-import Data.Attoparsec.Text (Parser, choice, option, space, (<?>))
+import Data.Attoparsec.Text (Parser, choice, option, space, (<?>), asciiCI)
 import Data.Attoparsec.Text qualified as A
 import Data.Functor
 import Data.Time
@@ -95,7 +95,7 @@ fixedDate = choice [parseDDMMYYYY >>= parseTimeFromDay, parseYYYYMMDD >>= parseT
       return (year, month, day)
     parseDDMonthYYYY = do
       day <- ordinal <|> decimal
-      void " of " <|> spaces
+      void (asciiCI " of ") <|> spaces
       month <- namedMonth
       void $ optional ","
       spaces
@@ -104,13 +104,13 @@ fixedDate = choice [parseDDMMYYYY >>= parseTimeFromDay, parseYYYYMMDD >>= parseT
 
     parseMonthDDYYYY = do
       month <- namedMonth
-      void " the " <|> spaces
+      void (asciiCI " the ") <|> spaces
       day <- ordinal <|> decimal
       void $ optional ","
       spaces
       year <- fromIntegral <$> decimal
       return (year, month, day)
-    namedMonth = choice $ zipWith ($>) ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"] [1 ..]
+    namedMonth = choice $ zipWith ($>) (map asciiCI ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"]) [1 ..]
     parseTimeFromDay (year, month, day) = maybe (fail "Invalid year, month, day combination") pure $ fromGregorianValid year month day
 
 duedate :: Parser DueDate
@@ -155,7 +155,7 @@ duedate = everyWeekDay <|> everyTime <|> fixedTime <|> nextWeekDay <|> nextDay <
       time <- option midday timeOfDay
       return $ EveryWeekDay day time
     nextTime = NextTime <$> timeOfDay
-    weekday = "monday" $> Monday <|> "tuesday" $> Tuesday <|> "wednesday" $> Wednesday <|> "thursday" $> Thursday <|> "friday" $> Friday <|> "saturday" $> Saturday <|> "sunday" $> Sunday
+    weekday = choice $ zipWith ($>) (map asciiCI ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]) [Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday]
     nextDay = do
       offset <- dayOffset
       void $ optional (spaces *> "at" *> spaces)

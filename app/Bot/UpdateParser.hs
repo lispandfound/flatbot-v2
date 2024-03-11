@@ -32,7 +32,6 @@ instance Monoid (ParserError a) where
 
 type UpdateParser a = ExceptT (ParserError String) (Reader Update) a
 
--- TODO: All of these can be redone with the mtl monad transformers... perhaps I should do that
 runUpdateParser :: UpdateParser a -> Update -> Either (ParserError String) a
 runUpdateParser e update = flip runReader update . runExceptT $ e
 

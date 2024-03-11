@@ -18,6 +18,8 @@ import Database.SQLite.Simple
 import Fmt
 import Telegram.Bot.API
 import Telegram.Bot.Simple
+import Text.Blaze.Html (Markup)
+import qualified Text.Blaze.Html5 as H
 
 spaces :: Parser ()
 spaces = void $ takeTill (/= ' ')
@@ -42,22 +44,20 @@ debt = messageParser $ do
   reason <- option "" $ " " *> spaces *> takeText
   return (amount, reason)
 
-debtCommandError :: String -> String
-debtCommandError cmd =
-  unlines
-    [ "I couldn't understand the " ++ cmd ++ " command you just gave.",
-      "Try reading the help documentation on debts? Type /help to find it.",
-      "You should try something like",
-      cmd ++ " @Daniel $30 power"
-    ]
+debtCommandError :: String -> Markup
+debtCommandError cmd = do
+  "I couldn't understand the "
+  H.string cmd
+  " command you just gave.\n"
+  "Try reading the help documentation on debts? Type /help to find it.\n"
+  "You should try something like\n"
+  H.pre $ H.string cmd <> " @Daniel $30 power"
 
-debtIncorrectMentionsCountError :: String -> String
-debtIncorrectMentionsCountError cmd =
-  unlines
-    [ "You have to mention at least one person who owes you a debt, like so: ",
-      cmd ++ " @Daniel $30 power",
-      "Maybe try reading the documentation on debts? Type /help to find it."
-    ]
+debtIncorrectMentionsCountError :: String -> Markup
+debtIncorrectMentionsCountError cmd = do
+  "You have to mention at least one person who owes you a debt, like so: "
+  H.pre $ H.string cmd <> " @Daniel $30 power"
+  "Maybe try reading the documentation on debts? Type /help to find it."
 
 addDebtCommand :: UpdateParser Action
 addDebtCommand = command "owes" *> (AddDebt <$> chat <*> sender <*> overrideError (debtIncorrectMentionsCountError "/owes") mentions <*> overrideError (debtCommandError "/owes") debt)
@@ -68,22 +68,18 @@ splitDebtCommand = command "split" *> (SplitDebt <$> chat <*> sender <*> overrid
 tallyChatCommand :: UpdateParser Action
 tallyChatCommand = command "tally" *> (TallyChat <$> chat)
 
-historyErrorMessage :: String
-historyErrorMessage =
-  unlines
-    [ "You have to mention the person you want to compare your debts with, like so:",
-      "/history @Daniel"
-    ]
+historyErrorMessage :: Markup
+historyErrorMessage = do
+  "You have to mention the person you want to compare your debts with, like so:"
+  H.pre "/history @Daniel"
 
 historyChatCommand :: UpdateParser Action
 historyChatCommand = command "history" *> (DebtHistory <$> chat <*> sender <*> overrideError historyErrorMessage mention)
 
-settleErrorMessage :: String
-settleErrorMessage =
-  unlines
-    [ "You have to mention the person you're settling your debts with, like so:",
-      "/settle @Daniel"
-    ]
+settleErrorMessage :: Markup
+settleErrorMessage = do
+  "You have to mention the person you're settling your debts with, like so:"
+  H.pre "/settle @Daniel"
 
 settleChatCommand :: UpdateParser Action
 settleChatCommand = command "settle" *> (SettleDebts <$> chat <*> sender <*> overrideError settleErrorMessage mention)

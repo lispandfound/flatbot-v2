@@ -2,22 +2,24 @@
 
 module Main (main) where
 
+import Bot.Common
 import Bot.Action
 import Bot.Debt qualified as DB
 import Bot.Help qualified as HB
 import Bot.Reminder qualified as RB
 import Bot.UpdateParser (runUpdateParser, getError)
 import Control.Applicative
-import Control.Monad (void)
 import Data.Debt
 import Data.Functor (($>))
 import Data.Reminder qualified as R
 import Data.Text (Text)
-import Data.Text qualified as Text
+import qualified Data.Text as Text
+import Data.Text.Lazy (toStrict)
 import Database.SQLite.Simple (Connection, execute_, open)
 import System.Environment (getEnv)
 import Telegram.Bot.API
 import Telegram.Bot.Simple
+import Text.Blaze.Html.Renderer.Text (renderHtml)
 
 data Model = Model
   { dbConnection :: Connection
@@ -61,7 +63,7 @@ updateToAction update _ =
                                 <|> RB.pickReminderCommand
                                 <|> RB.deleteReminderCallback
                                ) update
-   in either (getError . fmap ReportError) Just parsed
+   in either (getError . fmap (ReportError . toStrict . renderHtml)) Just parsed
 
 setupMessage :: Text
 setupMessage =
@@ -85,15 +87,12 @@ handleAction action model = case action of
   SendDebtHelp -> model <# HB.sendDebtHelp
   SendHelp -> model <# HB.sendHelp
   SendSetup chat -> model <# sendToChat (unwrapChatId chat) setupMessage
-  ReportError err -> model <# replyText (Text.pack err)
+  ReportError err -> model <# replyHtml err
   where
     unwrapChatId chat = let (ChatId id_) = chatId chat in id_
 
 nagUsers :: Model -> Eff Action Model
 nagUsers model = eff (DB.nagChats (dbConnection model)) $> model
-
-sendToChat :: Integer -> Text -> BotM ()
-sendToChat chatId msg = void (runTG $ defSendMessage (SomeChatId . ChatId $ chatId) msg)
 
 remindUsers :: Model -> Eff Action Model
 remindUsers model = eff (RB.remindUsersInChats (dbConnection model)) $> model

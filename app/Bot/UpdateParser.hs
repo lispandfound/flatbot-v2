@@ -21,14 +21,16 @@ import Telegram.Bot.API
     messageEntityOffset,
   )
 import Telegram.Bot.Simple.UpdateParser (updateMessageText)
+import Text.Blaze.Html (Markup)
+import qualified Text.Blaze.Html as H
 
 type ParserError a = First a
-type UpdateParser a = ExceptT (ParserError String) (Reader Update) a
+type UpdateParser a = ExceptT (ParserError Markup) (Reader Update) a
 
 getError :: ParserError a -> Maybe a
 getError = getFirst
 
-runUpdateParser :: UpdateParser a -> Update -> Either (ParserError String) a
+runUpdateParser :: UpdateParser a -> Update -> Either (ParserError Markup) a
 runUpdateParser e update = flip runReader update . runExceptT $ e
 
 liftMaybe :: Maybe a -> UpdateParser a
@@ -37,7 +39,7 @@ liftMaybe = maybe (throwError mempty) pure
 isProbablyHuman :: MessageEntity -> Bool
 isProbablyHuman = maybe False (\u -> not (Text.null (userFirstName u) || userIsBot u)) . messageEntityUser
 
-throwParseError :: String -> UpdateParser a
+throwParseError :: Markup -> UpdateParser a
 throwParseError = throwError . First . Just
 
 mentions :: UpdateParser [User]
@@ -50,7 +52,7 @@ mentions = ask >>= go
       guard $ (not . null) users
       return users
 
-overrideError :: String -> UpdateParser a -> UpdateParser a
+overrideError :: Markup -> UpdateParser a -> UpdateParser a
 overrideError e p = ask >>= (either (const $ throwParseError e) pure . runUpdateParser p)
 
 mention :: UpdateParser User
@@ -78,7 +80,7 @@ strippedMessageText = do
     entityEnd ent = messageEntityOffset ent + messageEntityLength ent
 
 messageParser :: Parser a -> UpdateParser a
-messageParser p = strippedMessageText >>= either throwParseError pure . parseOnly p
+messageParser p = strippedMessageText >>= either (throwParseError . H.string) pure . parseOnly p
 
 unstrippedMessageParser :: Parser a -> UpdateParser a
 unstrippedMessageParser p = messageText >>= either (const $ throwError mempty) pure . parseOnly p

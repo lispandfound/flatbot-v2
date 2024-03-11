@@ -1,12 +1,11 @@
 module Bot.Help where
 
+import Bot.Common
 import Bot.Action
 import Data.Text qualified as Text
-import Data.Text.Lazy (toStrict)
 import Telegram.Bot.API
 import Telegram.Bot.Simple
 import Text.Blaze.Html (Markup)
-import Text.Blaze.Html.Renderer.Text
 import Text.Blaze.Html5 qualified as H
 import Bot.UpdateParser
 import Data.Functor
@@ -24,13 +23,6 @@ helpMessage =
           actionButton "How do I set reminders?" SendReminderHelp,
           actionButton "I need date formatting help!" SendDateHelp
         ]
-
-htmlEditUpdateMessage :: Markup -> BotM ()
-htmlEditUpdateMessage el =
-  editUpdateMessage $
-    (toEditMessage (toStrict . renderHtml $ el))
-      { editMessageParseMode = Just HTML
-      }
 
 nl :: Markup
 nl = "\n"
@@ -79,8 +71,9 @@ reminderHelp = do
   " command. If you needed to remind Daniel to put the bins out every Tuesday evening you could use:"
   H.pre "/remind @Daniel every Tuesday evening to put the bins out"
   "The bot will then ping Daniel every Tuesday at 6pm. The general syntax for adding reminders is "
-  H.code "/remind <person> <when> <reason>"
-  "."
+  H.pre "/remind <person (optional)> <when> <reason>"
+  "If you want to remind yourself, just don't mention anyone like so"
+  H.pre "/remind every Tuesday evening to put the bins out"
   nl
   "The date format is very flexible, check out \"I need date formatting help!\" for more information on the different ways to format dates."
   nl

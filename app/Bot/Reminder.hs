@@ -9,6 +9,7 @@ import Data.Maybe
 import Data.Reminder (Reminder (..))
 import Data.Reminder qualified as R
 import Data.Text (Text)
+import qualified Data.Text as Text
 import Data.Time.Clock
 import Data.Time.LocalTime (LocalTime, ZonedTime (zonedTimeToLocalTime), getCurrentTimeZone, localTimeToUTC, utcToLocalZonedTime)
 import Database.SQLite.Simple
@@ -16,8 +17,10 @@ import Fmt
 import Telegram.Bot.API
 import Telegram.Bot.Simple
 import Bot.UpdateParser as UP
+import Control.Applicative ((<|>))
 import Data.Attoparsec.Text (takeText, decimal)
-
+import Text.Blaze.Html (Markup)
+import Text.Blaze.Html5 qualified as H
 
 getCurrentLocalTime :: IO LocalTime
 getCurrentLocalTime = zonedTimeToLocalTime <$> (getCurrentTime >>= utcToLocalZonedTime)
@@ -97,20 +100,17 @@ remindUser conn r = do
     _ -> pure ()
   sendHTMLToChat (R.chat r) (reminderNag (R.remindee r) (R.remindeeUserName r) (R.reason r))
 
-reminderErrorMessage :: String
-reminderErrorMessage = unlines ["I could understand that /remind command you just gave.",
-                                "Try reading the documentation on dates or reminders?",
-                                "The syntax is /remind <@person> <date> <reason>",
-                                "e.g. /remind @Daniel tuesday evening to take out the bins"]
-
-
-reminderMentionMessage :: String
-reminderMentionMessage = unlines ["You need to mention the person you want to remind, like so:"
-                                 , "/remind @Daniel tuesday evening to take out the bins"]
+reminderErrorMessage :: Markup
+reminderErrorMessage = do
+  "I could understand that /remind command you just gave.\n"
+  "Try reading the documentation on dates or reminders?\n"
+  "The syntax is"
+  H.pre "/remind <@person (optional)> <date> <reason>"
+  "e.g. /remind @Daniel tuesday evening to take out the bins"
 
 addReminderCommand :: UpdateParser Action
-addReminderCommand = command "remind" *> (AddReminder <$> UP.chat <*> overrideError reminderMentionMessage mention <*> overrideError reminderErrorMessage (messageParser reminder))
-  where reminder = (,) <$> duedate <*> takeText
+addReminderCommand = command "remind" *> (AddReminder <$> UP.chat <*> (mention <|> sender) <*> overrideError reminderErrorMessage (messageParser reminder))
+  where reminder = (,) <$> duedate <*> fmap Text.strip takeText
 
 pickReminderCommand :: UpdateParser Action
 pickReminderCommand = command "unremind" *> (PickReminder <$> UP.chat)

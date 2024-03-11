@@ -61,7 +61,7 @@ executable flatbot
     main-is:          Main.hs
 
     -- Modules included in this executable, other than Main.
-    other-modules: Data.Debt, Data.DueDate, Data.Reminder, Data.Formatters, Bot.Action, Bot.Debt, Bot.Reminder, Bot.Help, Bot.UpdateParser
+    other-modules: Data.Debt, Data.DueDate, Data.Reminder, Data.Formatters, Bot.Action, Bot.Debt, Bot.Reminder, Bot.Help, Bot.UpdateParser, Bot.Common
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:

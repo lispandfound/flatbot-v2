@@ -20,5 +20,5 @@ data Action
   | AddReminder Chat User (DueDate, Text)
   | DeleteReminder Integer
   | PickReminder Chat
-  | ReportError String
+  | ReportError Text
   deriving (Show)

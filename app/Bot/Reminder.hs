@@ -102,7 +102,7 @@ remindUser conn r = do
 
 reminderErrorMessage :: Markup
 reminderErrorMessage = do
-  "I could understand that /remind command you just gave.\n"
+  "I could not understand that /remind command you just gave.\n"
   "Try reading the documentation on dates or reminders?\n"
   "The syntax is"
   H.pre "/remind <@person (optional)> <date> <reason>"

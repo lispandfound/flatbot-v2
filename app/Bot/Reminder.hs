@@ -1,4 +1,4 @@
-module Bot.Reminder where
+module Bot.Reminder (addReminder, pickReminder, deleteReminder, addReminderCommand, pickReminderCommand, deleteReminderCallback, remindUsersInChats) where
 
 import Bot.Action
 import Control.Monad
@@ -16,7 +16,6 @@ import Fmt
 import Telegram.Bot.API
 import Telegram.Bot.Simple
 import Bot.UpdateParser as UP
-import Bot.Action
 import Data.Attoparsec.Text (takeText, decimal)
 
 
@@ -24,7 +23,7 @@ getCurrentLocalTime :: IO LocalTime
 getCurrentLocalTime = zonedTimeToLocalTime <$> (getCurrentTime >>= utcToLocalZonedTime)
 
 addReminder :: Connection -> Chat -> User -> DueDate -> Text -> BotM Text
-addReminder conn chat remindee dd reason = do
+addReminder conn chat_ remindee dd reason = do
   liftIO $ do
     now <- getCurrentLocalTime
     zone <- getCurrentTimeZone
@@ -35,7 +34,7 @@ addReminder conn chat remindee dd reason = do
     R.insertReminder conn reminder
   return $ reminderMessage remindee dd reason
   where
-    (ChatId chatId_) = chatId chat
+    (ChatId chatId_) = chatId chat_
     (UserId remindeeId) = userId remindee
 
 
@@ -58,7 +57,7 @@ reminderMessage remindee dd reason = "Will remind " +| userNameF remindee |+ " "
     dueDateF (EveryWeekDay weekday t) = "every " +|| weekday ||+ " at " +| t |+ ""
 
 pickReminder :: Connection -> Chat -> BotM ()
-pickReminder conn chat = do
+pickReminder conn chat_ = do
   reminderList <- liftIO $ R.getReminders conn chatId_
   let msg =
         (toEditMessage "Select a reminder to delete")
@@ -66,7 +65,7 @@ pickReminder conn chat = do
           }
   replyOrEdit msg
   where
-    (ChatId chatId_) = chatId chat
+    (ChatId chatId_) = chatId chat_
 
 deleteReminder :: Connection -> Integer -> BotM ()
 deleteReminder conn rid_ = do

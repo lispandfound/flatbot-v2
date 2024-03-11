@@ -6,7 +6,7 @@ import Bot.Action
 import Bot.Debt qualified as DB
 import Bot.Help qualified as HB
 import Bot.Reminder qualified as RB
-import Bot.UpdateParser (UpdateParser (..))
+import Bot.UpdateParser (UpdateParser (..), runUpdateParser, ParserError (getError))
 import Control.Applicative
 import Control.Monad (void)
 import Data.Debt
@@ -61,7 +61,7 @@ updateToAction update _ =
                                 <|> RB.pickReminderCommand
                                 <|> RB.deleteReminderCallback
                                ) update
-   in either (fmap ReportError) Just parsed
+   in either (getError . fmap ReportError) Just parsed
 
 setupMessage :: Text
 setupMessage =

@@ -2,9 +2,7 @@ module Bot.UpdateParser where
 
 import Control.Applicative
 import Control.Arrow ((&&&))
-import Control.Monad (void, (>=>))
-import Data.Attoparsec.Text (Parser, parseOnly, string, (<?>), parse)
-import Data.Bifunctor
+import Data.Attoparsec.Text (Parser, parseOnly, string, (<?>))
 import Data.Maybe
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -21,67 +19,58 @@ import Telegram.Bot.API
     messageEntityOffset,
   )
 import Telegram.Bot.Simple.UpdateParser (updateMessageText)
+import Control.Monad.Except (ExceptT, runExceptT, MonadError (throwError))
+import Control.Monad.Reader (Reader, runReader, asks, ask)
 
-type ParserError = Maybe String
+newtype ParserError a = ParserError { getError :: Maybe a } deriving (Functor, Eq, Show, Monad, Applicative, Alternative)
 
-newtype UpdateParser a = UpdateParser {runUpdateParser :: Update -> Either ParserError a} deriving (Functor)
+instance Semigroup (ParserError a) where
+  (<>) = (<|>)
 
-instance Applicative UpdateParser where
-  pure x = UpdateParser $ (pure . pure) x
-  UpdateParser f <*> UpdateParser x = UpdateParser (\u -> f u <*> x u)
+instance Monoid (ParserError a) where
+  mempty = ParserError Nothing
 
-instance Alternative UpdateParser where
-  empty = UpdateParser (const . Left $ Nothing)
-  UpdateParser f <|> UpdateParser g =
-    UpdateParser
-      ( \u -> case f u of
-          Left Nothing -> g u
-          r -> r
-      )
+type UpdateParser a = ExceptT (ParserError String) (Reader Update) a
 
-instance Monad UpdateParser where
-  return = pure
-  UpdateParser x >>= f = UpdateParser (\u -> x u >>= flip runUpdateParser u . f)
 
-instance MonadFail UpdateParser where
-  fail s = UpdateParser $ const (Left . Just $ s)
+-- TODO: All of these can be redone with the mtl monad transformers... perhaps I should do that
+runUpdateParser :: UpdateParser a -> Update -> Either (ParserError String) a
+runUpdateParser e update = flip runReader update . runExceptT $ e
 
-overrideError :: String -> UpdateParser a -> UpdateParser a
-overrideError err parser = UpdateParser (first (const $ Just err) . runUpdateParser parser)
-
-maybeToEither :: a -> Maybe b -> Either a b
-maybeToEither x = maybe (Left x) Right
-
-liftMaybe :: Maybe a -> Either ParserError a
-liftMaybe = maybeToEither Nothing
+liftMaybe :: Maybe a -> UpdateParser a
+liftMaybe = maybe (throwError mempty) pure
 
 isProbablyHuman :: MessageEntity -> Bool
 isProbablyHuman = maybe False (\u -> not (Text.null (userFirstName u) || userIsBot u)) . messageEntityUser
 
+throwParseError :: String -> UpdateParser a
+throwParseError = throwError . ParserError . Just
+
 
 mentions :: UpdateParser [User]
-mentions =
-  UpdateParser
-    ( \update -> maybeToEither (Just "Expecting at least some mentioned users!") $ do
-        msg <- updateMessage update
-        ent <- messageEntities msg
-        let users = mapMaybe messageEntityUser . filter isProbablyHuman $ ent
-        guard $ (not . null) users
-        return users
-    )
+mentions = ask >>= go
+  where go update = maybe (throwParseError "Expected at least one mentioned user") pure $ do
+          msg <- updateMessage update
+          ent <- messageEntities msg
+          let users = mapMaybe messageEntityUser . filter isProbablyHuman $ ent
+          guard $ (not . null) users
+          return users
+
+overrideError :: String -> UpdateParser a -> UpdateParser a
+overrideError e p = ask >>= (either (const $ throwParseError e) pure . runUpdateParser p)
 
 mention :: UpdateParser User
 mention = do
   ms <- mentions
   case ms of
     [m] -> return m
-    _ -> fail "Expected exactly one mentioned user"
+    _ -> throwParseError "Expected exactly one mentioned user"
 
 messageText :: UpdateParser Text
-messageText = UpdateParser (liftMaybe . updateMessageText)
+messageText = asks updateMessageText >>= liftMaybe
 
 entities :: UpdateParser [MessageEntity]
-entities = UpdateParser (liftMaybe . (updateMessage >=> messageEntities))
+entities = asks (updateMessage >=> messageEntities) >>= liftMaybe
 
 strippedMessageText :: UpdateParser Text
 strippedMessageText = do
@@ -95,22 +84,22 @@ strippedMessageText = do
     entityEnd ent = messageEntityOffset ent + messageEntityLength ent
 
 messageParser :: Parser a -> UpdateParser a
-messageParser p = strippedMessageText >>= UpdateParser . const . first Just . parseOnly p
+messageParser p = strippedMessageText >>= either throwParseError pure . parseOnly p
 
 unstrippedMessageParser :: Parser a -> UpdateParser a
-unstrippedMessageParser p = messageText >>= UpdateParser . const . first (const Nothing) . parseOnly p
+unstrippedMessageParser p = messageText >>= either (const $ throwError mempty) pure . parseOnly p
 
 command :: Text -> UpdateParser ()
 command t = unstrippedMessageParser ((void . string $ "/" <> t) <?> ("Command " <> Text.unpack t))
 
 chat :: UpdateParser Chat
-chat = UpdateParser (liftMaybe . fmap messageChat . updateMessage)
+chat = asks (fmap messageChat . updateMessage) >>= liftMaybe
 
 sender :: UpdateParser User
-sender = UpdateParser (liftMaybe . (updateMessage >=> messageFrom))
+sender = asks (updateMessage >=> messageFrom) >>= liftMaybe
 
 callbackQuery :: UpdateParser Text
-callbackQuery = UpdateParser (liftMaybe . (updateCallbackQuery >=> callbackQueryData))
+callbackQuery = asks (updateCallbackQuery >=> callbackQueryData) >>= liftMaybe
 
 callbackQueryParser :: Parser a -> UpdateParser a
-callbackQueryParser p = callbackQuery >>= UpdateParser . const . first (const Nothing) . parseOnly p
+callbackQueryParser p = callbackQuery >>= either (const $ throwError mempty) pure . parseOnly p

@@ -109,7 +109,7 @@ reminderMentionMessage = unlines ["You need to mention the person you want to re
                                  , "/remind @Daniel tuesday evening to take out the bins"]
 
 addReminderCommand :: UpdateParser Action
-addReminderCommand = command "remind" *> (AddReminder <$> UP.chat <*> overrideError reminderErrorMessage mention <*> overrideError reminderErrorMessage (messageParser reminder))
+addReminderCommand = command "remind" *> (AddReminder <$> UP.chat <*> overrideError reminderMentionMessage mention <*> overrideError reminderErrorMessage (messageParser reminder))
   where reminder = (,) <$> duedate <*> takeText
 
 pickReminderCommand :: UpdateParser Action

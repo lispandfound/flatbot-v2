@@ -1,11 +1,11 @@
 module Bot.UpdateParser where
 
-import Control.Applicative
 import Control.Arrow ((&&&))
 import Control.Monad
 import Control.Monad.Except (ExceptT, MonadError (throwError), runExceptT)
 import Control.Monad.Reader (Reader, ask, asks, runReader)
 import Data.Attoparsec.Text (Parser, parseOnly, string, (<?>))
+import Data.Monoid (First(..))
 import Data.Maybe
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -22,15 +22,11 @@ import Telegram.Bot.API
   )
 import Telegram.Bot.Simple.UpdateParser (updateMessageText)
 
-newtype ParserError a = ParserError {getError :: Maybe a} deriving (Functor, Eq, Show, Monad, Applicative, Alternative)
-
-instance Semigroup (ParserError a) where
-  (<>) = (<|>)
-
-instance Monoid (ParserError a) where
-  mempty = ParserError Nothing
-
+type ParserError a = First a
 type UpdateParser a = ExceptT (ParserError String) (Reader Update) a
+
+getError :: ParserError a -> Maybe a
+getError = getFirst
 
 runUpdateParser :: UpdateParser a -> Update -> Either (ParserError String) a
 runUpdateParser e update = flip runReader update . runExceptT $ e
@@ -42,7 +38,7 @@ isProbablyHuman :: MessageEntity -> Bool
 isProbablyHuman = maybe False (\u -> not (Text.null (userFirstName u) || userIsBot u)) . messageEntityUser
 
 throwParseError :: String -> UpdateParser a
-throwParseError = throwError . ParserError . Just
+throwParseError = throwError . First . Just
 
 mentions :: UpdateParser [User]
 mentions = ask >>= go

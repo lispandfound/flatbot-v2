@@ -6,7 +6,7 @@ import Bot.Action
 import Bot.Debt qualified as DB
 import Bot.Help qualified as HB
 import Bot.Reminder qualified as RB
-import Bot.UpdateParser (runUpdateParser, ParserError (getError))
+import Bot.UpdateParser (runUpdateParser, getError)
 import Control.Applicative
 import Control.Monad (void)
 import Data.Debt

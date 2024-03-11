@@ -9,7 +9,7 @@ import Fmt
 import Telegram.Bot.API
 
 currencyF :: Double -> Builder
-currencyF d = if df < 0 then "-$" else "$" +| commaizeF (abs df) |+ "." +| padRightF 2 '0' cents
+currencyF d = if df < 0 then "-$" else "$" +| commaizeF (abs df) |+ "." +| (if cents < 10 then padLeftF else padRightF) 2 '0' cents
   where
     df :: Integer
     df = floor d

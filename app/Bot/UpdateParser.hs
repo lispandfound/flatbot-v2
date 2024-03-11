@@ -2,11 +2,13 @@ module Bot.UpdateParser where
 
 import Control.Applicative
 import Control.Arrow ((&&&))
+import Control.Monad
+import Control.Monad.Except (ExceptT, MonadError (throwError), runExceptT)
+import Control.Monad.Reader (Reader, ask, asks, runReader)
 import Data.Attoparsec.Text (Parser, parseOnly, string, (<?>))
 import Data.Maybe
 import Data.Text (Text)
 import Data.Text qualified as Text
-import Control.Monad
 import Telegram.Bot.API
   ( CallbackQuery (callbackQueryData),
     Chat,
@@ -19,10 +21,8 @@ import Telegram.Bot.API
     messageEntityOffset,
   )
 import Telegram.Bot.Simple.UpdateParser (updateMessageText)
-import Control.Monad.Except (ExceptT, runExceptT, MonadError (throwError))
-import Control.Monad.Reader (Reader, runReader, asks, ask)
 
-newtype ParserError a = ParserError { getError :: Maybe a } deriving (Functor, Eq, Show, Monad, Applicative, Alternative)
+newtype ParserError a = ParserError {getError :: Maybe a} deriving (Functor, Eq, Show, Monad, Applicative, Alternative)
 
 instance Semigroup (ParserError a) where
   (<>) = (<|>)
@@ -31,7 +31,6 @@ instance Monoid (ParserError a) where
   mempty = ParserError Nothing
 
 type UpdateParser a = ExceptT (ParserError String) (Reader Update) a
-
 
 -- TODO: All of these can be redone with the mtl monad transformers... perhaps I should do that
 runUpdateParser :: UpdateParser a -> Update -> Either (ParserError String) a
@@ -46,15 +45,15 @@ isProbablyHuman = maybe False (\u -> not (Text.null (userFirstName u) || userIsB
 throwParseError :: String -> UpdateParser a
 throwParseError = throwError . ParserError . Just
 
-
 mentions :: UpdateParser [User]
 mentions = ask >>= go
-  where go update = maybe (throwParseError "Expected at least one mentioned user") pure $ do
-          msg <- updateMessage update
-          ent <- messageEntities msg
-          let users = mapMaybe messageEntityUser . filter isProbablyHuman $ ent
-          guard $ (not . null) users
-          return users
+  where
+    go update = maybe (throwParseError "Expected at least one mentioned user") pure $ do
+      msg <- updateMessage update
+      ent <- messageEntities msg
+      let users = mapMaybe messageEntityUser . filter isProbablyHuman $ ent
+      guard $ (not . null) users
+      return users
 
 overrideError :: String -> UpdateParser a -> UpdateParser a
 overrideError e p = ask >>= (either (const $ throwParseError e) pure . runUpdateParser p)

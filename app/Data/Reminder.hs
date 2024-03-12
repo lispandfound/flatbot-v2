@@ -1,4 +1,4 @@
-module Data.Reminder (Reminder (..), mkReminder, getReminders, deleteReminder, clearRemindersAtOrBefore, reminderTableSchema, bumpReminder, insertReminder, getRemindersAtOrBefore) where
+module Data.Reminder (Reminder (..), mkReminder, getReminder, getReminders, deleteReminder, clearRemindersAtOrBefore, reminderTableSchema, bumpReminder, insertReminder, getRemindersAtOrBefore, getPeriodicReminders) where
 
 import Data.Text (Text)
 import Data.Time
@@ -57,3 +57,12 @@ getReminders :: Connection -> Integer -> IO [Reminder]
 getReminders conn chat = query conn q (Only chat)
   where
     q = "SELECT id, chat, remindee, remindeeUserName, reason, nextNag, period FROM reminders WHERE chat = ?"
+
+getPeriodicReminders :: Connection -> Integer -> IO [Reminder]
+getPeriodicReminders conn chat = query conn q (Only chat)
+  where
+    q = "SELECT id, chat, remindee, remindeeUserName, reason, nextNag, period FROM reminders WHERE chat = ? AND period IS NOT NULL AND period > 0"
+
+getReminder :: Connection -> Integer -> IO Reminder
+getReminder conn rid_ = head <$> query conn q (Only rid_)
+    where q = "SELECT id, chat, remindee, remindeeUserName, reason, nextNag, period FROM reminders WHERE id = ?"

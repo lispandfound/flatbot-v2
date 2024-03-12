@@ -2,18 +2,18 @@
 
 module Main (main) where
 
-import Bot.Common
 import Bot.Action
+import Bot.Common
 import Bot.Debt qualified as DB
 import Bot.Help qualified as HB
 import Bot.Reminder qualified as RB
-import Bot.UpdateParser (runUpdateParser, getError)
+import Bot.UpdateParser (getError, runUpdateParser)
 import Control.Applicative
 import Data.Debt
 import Data.Functor (($>))
 import Data.Reminder qualified as R
 import Data.Text (Text)
-import qualified Data.Text as Text
+import Data.Text qualified as Text
 import Data.Text.Lazy (toStrict)
 import Database.SQLite.Simple (Connection, execute_, open)
 import System.Environment (getEnv)
@@ -50,19 +50,24 @@ data FlatbotConfig = FlatbotConfig
 
 updateToAction :: Update -> Model -> Maybe Action
 updateToAction update _ =
-  let parsed = runUpdateParser (DB.addDebtCommand
-                                <|> DB.splitDebtCommand
-                                <|> DB.tallyChatCommand
-                                <|> DB.settleChatCommand
-                                <|> DB.historyChatCommand
-                                <|> HB.helpCommand
-                                <|> HB.debtHelpCallback
-                                <|> HB.reminderHelpCallback
-                                <|> HB.dateHelpCallback
-                                <|> RB.addReminderCommand
-                                <|> RB.pickReminderCommand
-                                <|> RB.deleteReminderCallback
-                               ) update
+  let parsed =
+        runUpdateParser
+          ( DB.addDebtCommand
+              <|> DB.splitDebtCommand
+              <|> DB.tallyChatCommand
+              <|> DB.settleChatCommand
+              <|> DB.historyChatCommand
+              <|> HB.helpCommand
+              <|> HB.debtHelpCallback
+              <|> HB.reminderHelpCallback
+              <|> HB.dateHelpCallback
+              <|> RB.addReminderCommand
+              <|> RB.pickReminderCommand
+              <|> RB.deleteReminderCallback
+              <|> RB.bumpReminderCommand
+              <|> RB.bumpReminderCallback
+          )
+          update
    in either (getError . fmap (ReportError . toStrict . renderHtml)) Just parsed
 
 setupMessage :: Text
@@ -79,9 +84,11 @@ handleAction action model = case action of
   DebtHistory chat receivable payable -> model <# DB.debtHistory (dbConnection model) chat receivable payable
   AddReminder chat remindee (dd, reason) -> model <# RB.addReminder (dbConnection model) chat remindee dd reason
   PickReminder chat ->
-    model <# RB.pickReminder (dbConnection model) chat
+    model <# RB.deleteReminderPrompt (dbConnection model) chat
   DeleteReminder rid_ ->
     model <# RB.deleteReminder (dbConnection model) rid_
+  BumpReminderPrompt chat -> model <# RB.bumpReminderPrompt (dbConnection model) chat
+  BumpReminder rid_ -> model <# RB.bumpReminderById (dbConnection model) rid_
   SendDateHelp -> model <# HB.sendDateHelp
   SendReminderHelp -> model <# HB.sendReminderHelp
   SendDebtHelp -> model <# HB.sendDebtHelp

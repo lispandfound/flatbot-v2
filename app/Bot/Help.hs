@@ -81,7 +81,12 @@ reminderHelp = do
   nl
   "To delete a reminder, type:"
   H.pre "/unremind"
-  "You will then be prompted with a list of reminders. Tap one to delete it."
+  "You will then be prompted with a list of reminders. Tap one to delete it.\n"
+  H.b "Bumping reminders"
+  nl
+  "If you have a recurring reminder you want to delay use"
+  H.pre "/bump"
+  "You could use this if you usually want Daniel to take out the bins, but this week they're being collected on a different day to usual."
 
 dateHelp :: Markup
 dateHelp = do

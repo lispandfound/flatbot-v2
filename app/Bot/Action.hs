@@ -21,4 +21,6 @@ data Action
   | DeleteReminder Integer
   | PickReminder Chat
   | ReportError Text
+  | BumpReminder Integer
+  | BumpReminderPrompt Chat
   deriving (Show)

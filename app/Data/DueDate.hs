@@ -43,6 +43,7 @@ nextLocalDueDate (LocalTime d t) (EveryWeekDay weekday t') = LocalTime (addDays 
     diff :: Integer
     diff = if diff' == 0 then 6 else diff
 
+
 recurrencePeriod :: DueDate -> Maybe NominalDiffTime
 recurrencePeriod (EveryDay offset _) = Just $ daysAndTimeOfDayToTime (fromIntegral offset) midnight
 recurrencePeriod (EveryWeekDay _ _) = Just $ daysAndTimeOfDayToTime 7 midnight
@@ -159,6 +160,7 @@ duedate = everyWeekDay <|> everyTime <|> fixedTime <|> nextWeekDay <|> nextDay <
     nextDay = do
       offset <- dayOffset
       void $ optional (spaces *> "at" *> spaces)
+      spaces
       t <- option midday timeOfDay
       return $ NextDay offset t
     dayOffset = "tomorrow" $> 1 <|> inDays <|> inWeeks

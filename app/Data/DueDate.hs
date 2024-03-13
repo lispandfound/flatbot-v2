@@ -7,7 +7,7 @@ module Data.DueDate (DueDate (..), nextLocalDueDate, recurrencePeriod, duedate) 
 
 import Control.Applicative
 import Control.Monad
-import Data.Attoparsec.Text (Parser, choice, option, space, (<?>), asciiCI)
+import Data.Attoparsec.Text (Parser, asciiCI, choice, option, space, (<?>))
 import Data.Attoparsec.Text qualified as A
 import Data.Functor
 import Data.Time
@@ -42,7 +42,6 @@ nextLocalDueDate (LocalTime d t) (EveryWeekDay weekday t') = LocalTime (addDays 
     diff' = fromIntegral $ dayOfWeekDiff weekday (dayOfWeek d)
     diff :: Integer
     diff = if diff' == 0 then 6 else diff
-
 
 recurrencePeriod :: DueDate -> Maybe NominalDiffTime
 recurrencePeriod (EveryDay offset _) = Just $ daysAndTimeOfDayToTime (fromIntegral offset) midnight

@@ -65,4 +65,5 @@ getPeriodicReminders conn chat = query conn q (Only chat)
 
 getReminder :: Connection -> Integer -> IO Reminder
 getReminder conn rid_ = head <$> query conn q (Only rid_)
-    where q = "SELECT id, chat, remindee, remindeeUserName, reason, nextNag, period FROM reminders WHERE id = ?"
+  where
+    q = "SELECT id, chat, remindee, remindeeUserName, reason, nextNag, period FROM reminders WHERE id = ?"

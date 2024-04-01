@@ -28,10 +28,11 @@ currency :: Parser Double
 currency = do
   void . optional $ "$"
   wholePart <- decimal :: Parser Integer
-  guard $ wholePart > 0
+  guard $ wholePart >= 0
   (lead, centPart) <- option (mempty, 0) ("." *> ((,) <$> many (char '0') <*> decimal)) :: Parser ([Char], Integer)
   guard $ length lead <= 2 && centPart >= 0 && centPart < 100
-  return $ fromIntegral wholePart + fromInteger centPart / (10 ^ ind)
+  let cents = if centPart < 10 && null lead then centPart * 10 else centPart
+  return $ fromIntegral wholePart + fromInteger cents / (10 ^ ind)
   where
     ind :: Integer
     ind = 2

@@ -33,14 +33,22 @@ debtHelp = do
   nl
   "To add a debt, use the "
   H.code "/owes"
-  " command. To say that Daniel owes me $100 for power, type: "
-  H.pre "/owes @Daniel $100 power"
+  " command. To say that Daniel owes me $100 for apples, type: "
+  H.pre "/owes @Daniel $100 apples"
   "Typing the "
   H.code "@"
   " is important; it will pop up with a list of people in the chat when you do this."
   nl
   "The general syntax for adding debts is "
   H.code "/owes <person> <amount> <optional reason>"
+  nl
+  H.b "Splitting Debts"
+  nl
+  "For bills like power, where you wish to split a bill with a group of people, use "
+  H.code "/split"
+  ". If Ruby and Izaak both owe you $150 for a power bill, then"
+  H.pre "/split @Ruby @Izaak 150 for power bills"
+  "splits the power bill three ways between yourself, Ruby and Izaak (so they will owe you $50). The $ before any amount of money is optional for all debt commands."
   nl
   H.b "Tallying Debts"
   nl

@@ -61,10 +61,10 @@ debtIncorrectMentionsCountError cmd = do
   "Maybe try reading the documentation on debts? Type /help to find it."
 
 addDebtCommand :: UpdateParser Action
-addDebtCommand = command "owes" *> (AddDebt <$> chat <*> sender <*> overrideError (debtIncorrectMentionsCountError "/owes") mentions <*> overrideError (debtCommandError "/owes") debt)
+addDebtCommand = (command "owes" <|> command "owe") *> (AddDebt <$> chat <*> sender <*> overrideError (debtIncorrectMentionsCountError "/owes") mentions <*> overrideError (debtCommandError "/owes") debt)
 
 splitDebtCommand :: UpdateParser Action
-splitDebtCommand = command "split" *> (SplitDebt <$> chat <*> sender <*> overrideError (debtIncorrectMentionsCountError "/split") mentions <*> overrideError (debtCommandError "/split") debt)
+splitDebtCommand = (command "split" <|> command "splitme") *> (SplitDebt <$> chat <*> sender <*> overrideError (debtIncorrectMentionsCountError "/split") mentions <*> overrideError (debtCommandError "/split") debt)
 
 tallyChatCommand :: UpdateParser Action
 tallyChatCommand = command "tally" *> (TallyChat <$> chat)
